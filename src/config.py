@@ -41,8 +41,8 @@ class Config:
         self.window_size = int(os.getenv("WINDOW_SIZE", 4))
         self.step_size = int(os.getenv("STEP_SIZE", 2))
         self.test_size = float(os.getenv("TEST_SIZE", 0.2))
+        self.val_size = float(os.getenv("VAL_SIZE"), 0.2)
         self.batch_size = int(os.getenv("BATCH_SIZE", 32))
-        self.random_seed = int(os.getenv("RANDOM_SEED", 42))  # Seed
 
         # Model
         self.experiment_name = os.getenv("EXPERIMENT_NAME", "default_experiment")
@@ -52,7 +52,7 @@ class Config:
         self.model_tuning_dir = os.getenv("MODEL_TUNING_DIR", "/models/tuning/")
 
         # -- Fused Hyperparameters
-        self.xception = bool(os.getenv("XCEPTION", False))
+        self.xception_enabled = bool(os.getenv("XCEPTION_ENABLED", False))
         self.cbam_enabled = bool(os.getenv("CBAM_ENABLED", True))
         self.temporal_eca_enabled = bool(os.getenv("TEMPORAL_ECA_ENABLED", True))
         self.epochs = int(os.getenv("EPOCHS", 100))
@@ -64,6 +64,9 @@ class Config:
         # Results
         self.reports_dir = os.getenv("REPORTS_DIR", "reports/")
         self.plot_dir = os.getenv("PLOT_DIR", "reports/figures/")
+
+        # Misc
+        self.random_seed = int(os.getenv("RANDOM_SEED", 42))
 
     def print_config(self):
         print("Configuration:")

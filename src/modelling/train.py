@@ -16,10 +16,10 @@ def build_model(hp: kt.HyperParameters) -> Model:
     """Builds the fused model with the set hyperparameters.
 
     Args:
-        hp (kt.HyperParameters): _description_
+        hp (kt.HyperParameters): Object to attach hyper parameter search spaces to.
 
     Returns:
-        Model: _description_
+        Model: Model with search space hyperparameters.
     """
     config = Config()
 
@@ -31,7 +31,7 @@ def build_model(hp: kt.HyperParameters) -> Model:
     hp.Fixed("downsample", config.downsample)
     # Temporal ECA params (original paper values)
     hp.Fixed("gamma", config.gamma)
-    hp.fixed("beta", config.beta)
+    hp.Fixed("beta", config.beta)
 
     # Xception Params
     hp.Int("num_filters", min_value=8, max_value=64, step=8)

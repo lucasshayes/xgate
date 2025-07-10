@@ -1,15 +1,9 @@
-import os
-import sys
 from keras import layers, Model
 from keras_tuner import HyperParameters
 import keras.api as k
 from modules.xception import XceptionBlock
 from modules.attention.cbam import CBAM1D
 from modules.attention.temporal_eca import TemporalECA
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from config import Config
 
 
 class FusedModel(Model):

@@ -56,8 +56,8 @@ docs/_build/
 # PyBuilder
 target/
 
-# DotEnv configuration
-.env
+# DotEnv configuration 
+# .env (Not relevant, no sensitive info)
 
 # Database
 *.db
@@ -88,9 +88,7 @@ target/
 
 # Exclude virtual environment
 .venv/
+.conda/
 
 # Exclude trained models
 /models/
-
-# exclude data from source control by default
-# /data/

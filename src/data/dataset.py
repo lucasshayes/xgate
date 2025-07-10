@@ -394,7 +394,9 @@ if __name__ == "__main__":
 
     # Split raw data
     (gt_train, imu_train, rss_train), (gt_val, imu_val, rss_val), (gt_test, imu_test, rss_test) = (
-        dataset.split_data(raw_data["gt"], raw_data["imu"], raw_data["rss"])
+        dataset.split_data(
+            raw_data["gt"], raw_data["imu"], raw_data["rss"], config.test_size, config.val_size
+        )
     )
 
     # Process and save each split
