@@ -24,7 +24,7 @@ def get_callbacks(
 
     # Model checkpoint to save the best model
     model_checkpoint = callbacks.ModelCheckpoint(
-        filepath=model_checkpoints_dir + f"{experiment_name}_best_model.h5",
+        filepath=model_checkpoints_dir + f"{experiment_name}_best_model.keras",
         monitor="val_loss",
         save_best_only=True,
     )

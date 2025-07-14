@@ -61,20 +61,26 @@ class FusedModel(Model):
 
     @classmethod
     def build_and_compile(cls, hp: HyperParameters):
+        """Builds and compiles the FusedModel with hyperparameters.
+
+        Args:
+            hp (HyperParameters): Hyperparameters for the model.
+
+        Returns:
+            FusedModel: An instance of the FusedModel.
+        """
+
         model = cls(hp=hp)
 
         model.compile(
             optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate")),
             loss=k.losses.MeanSquaredError(),
-            metrics=[
-                k.metrics.MeanAbsoluteError(),
-                k.metrics.RootMeanSquaredError(),
-            ],
+            metrics=[k.metrics.MeanAbsoluteError(), k.metrics.RootMeanSquaredError()],
         )
 
         return model
 
-    def call(self, inputs):
+    def call(self, inputs, training=False):
         """
         Forward pass through the model.
 
@@ -87,7 +93,7 @@ class FusedModel(Model):
         x = inputs
 
         if self.xception_bool:
-            x = self.xception(x)
+            x = self.xception(x, training=training)
         else:
             x = self.fc(x)
 
@@ -100,7 +106,7 @@ class FusedModel(Model):
         if self.eca_bool:
             x = self.eca(x)
 
-        x = self.bn(x)
+        x = self.bn(x, training=training)
         x = self.fc(x)
         return self.out(x)
 

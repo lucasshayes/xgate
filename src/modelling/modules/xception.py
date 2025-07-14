@@ -46,17 +46,17 @@ class XceptionBlock(layers.Layer):
         if self.downsample_enabled:
             self.downsample = layers.AveragePooling1D(pool_size=2, name=f"{name}_downsample")
 
-    def call(self, inputs):
+    def call(self, inputs, training=None):
         x = self.conv1(inputs)
-        x = self.bn1(x)
+        x = self.bn1(x, training=training)
         x = self.relu1(x)
 
         x = self.conv2(x)
-        x = self.bn2(x)
+        x = self.bn2(x, training=training)
         x = self.relu2(x)
 
         for block in self.middle_blocks_layers:
-            x = block(x)
+            x = block(x, training=training)
 
         if self.downsample:
             x = self.downsample(x)
@@ -107,23 +107,23 @@ class MiddleBlock(layers.Layer):
         else:
             self.res_conv = None
 
-    def call(self, inputs):
+    def call(self, inputs, training=None):
         x = self.relu1(inputs)
         x = self.sepconv1(x)
-        x = self.bn1(x)
+        x = self.bn1(x, training=training)
 
         x = self.relu2(x)
         x = self.sepconv2(x)
-        x = self.bn2(x)
+        x = self.bn2(x, training=training)
 
         x = self.relu3(x)
         x = self.sepconv3(x)
-        x = self.bn3(x)
+        x = self.bn3(x, training=training)
 
         res = inputs
         if self.res_conv:
             res = self.res_conv(inputs)
-            res = self.res_bn(res)
+            res = self.res_bn(res, training=training)
 
         x = self.add([x, res])
         return x

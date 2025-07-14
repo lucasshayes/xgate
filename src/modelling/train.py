@@ -1,5 +1,8 @@
 import os
 import sys
+import time
+import json
+import numpy as np
 import keras.api as k
 import keras_tuner as kt
 from keras.api import Model
@@ -12,43 +15,69 @@ from modelling.model import FusedModel
 from utils.callbacks import get_callbacks
 
 
-def build_model(hp: kt.HyperParameters) -> Model:
-    """Builds the fused model with the set hyperparameters.
+class CustomHyperModel(kt.HyperModel):
+    def __init__(self, config, dataset):
+        # Initialize with config and dataset
+        self.config = config
+        self.dataset = dataset
 
-    Args:
-        hp (kt.HyperParameters): Object to attach hyper parameter search spaces to.
+    def build(self, hp: kt.HyperParameters) -> Model:
+        """Builds the fused model with the passed hyperparameters and config.
 
-    Returns:
-        Model: Model with search space hyperparameters.
-    """
-    config = Config()
+        Args:
+            hp (kt.HyperParameters): Object to attach hyper parameter search spaces to.
 
-    # Model module toggle
-    hp.Fixed("xception_bool", config.xception_enabled)
-    hp.Fixed("cbam_bool", config.cbam_enabled)
-    hp.Fixed("eca_bool", config.temporal_eca_enabled)
-    # Downsample toggle
-    hp.Fixed("downsample", config.downsample)
-    # Temporal ECA params (original paper values)
-    hp.Fixed("gamma", config.gamma)
-    hp.Fixed("beta", config.beta)
+        Returns:
+            Model: Model with search space hyperparameters.
+        """
 
-    # Xception Params
-    hp.Int("num_filters", min_value=8, max_value=64, step=8)
-    hp.Int("kernel_size", min_value=3, max_value=7, step=2)
-    hp.Int("middle_blocks", min_value=1, max_value=3)
+        # Model module toggle
+        hp.Fixed("xception_bool", self.config.xception_enabled)
+        hp.Fixed("cbam_bool", self.config.cbam_enabled)
+        hp.Fixed("eca_bool", self.config.temporal_eca_enabled)
+        # Downsample toggle
+        hp.Fixed("downsample", self.config.downsample)
+        # Temporal ECA params (original paper values)
+        hp.Fixed("gamma", self.config.gamma)
+        hp.Fixed("beta", self.config.beta)
 
-    # CBAM reduction ratio
-    hp.Int("r_ratio", min_value=8, max_value=16, step=4)
+        # Xception Params
+        hp.Int("num_filters", min_value=8, max_value=32, step=8)
+        hp.Int("kernel_size", min_value=3, max_value=11, step=2)
+        hp.Int("middle_blocks", min_value=1, max_value=3)
 
-    # Model Params
-    hp.Int("fc_units", min_value=16, max_value=128, step=16)
-    hp.Int("gru_units", min_value=16, max_value=128, step=16)
-    hp.Choice("learning_rate", values=[0.01, 0.001, 0.0001])
+        # CBAM reduction ratio
+        hp.Int("r_ratio", min_value=8, max_value=16, step=4)
 
-    # Instantiate and compile model with hyperparameters
-    model = FusedModel.build_and_compile(hp)
-    return model
+        # Model Params
+        hp.Int("fc_units", min_value=32, max_value=128, step=16)
+        hp.Int("gru_units", min_value=32, max_value=128, step=16)
+        hp.Choice("learning_rate", values=[0.01, 0.001, 0.0001])
+
+        # Instantiate and compile model with hyperparameters
+        model = FusedModel.build_and_compile(hp)
+        return model
+
+    def fit(self, hp, model, *args, **kwargs):
+        """Fits the model with the given hyperparameters and batch size
+        Args:
+            hp (kt.HyperParameters): Hyperparameters for the model.
+            model (Model): The model to fit.
+            *args: Additional positional arguments for model.fit.
+            **kwargs: Additional keyword arguments for model.fit.
+        Returns:
+            History: The history of the training process.
+        """
+        return model.fit(
+            *args,
+            batch_size=hp.Choice("batch_size", [16, 32, 64]),
+            **kwargs,
+        )
+
+
+def clean_history(history):
+    """Convert all NumPy types in history to native Python types."""
+    return {metric: [float(x) for x in v] for metric, v in history.items()}
 
 
 def train_model():
@@ -59,23 +88,26 @@ def train_model():
     config = Config()
     dataset = Dataset(config.random_seed)
 
-    # Create tensorflow datasets from the saved processed datasets
-    train_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "train/",
-        batch_size=config.batch_size,
-    )
-    val_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "val/",
-        batch_size=config.batch_size,
-    )
+    # Create tensorflow datasets from the saved processed datasets with tuned batch size
+    train_dataset = dataset.create_tf_dataset(config.processed_dataset_dir + "train/")
+    val_dataset = dataset.create_tf_dataset(config.processed_dataset_dir + "val/")
+
+    # Check for required directories
+    for base_dir in [
+        config.model_exports_dir,
+        config.reports_dir,
+        config.model_checkpoints_dir,
+        config.model_logs_dir,
+    ]:
+        os.makedirs(os.path.join(base_dir, config.experiment_name), exist_ok=True)
 
     # Tune the model according to mean squared error (loss)
-    tuner = kt.Hyperband(
-        hypermodel=build_model,
+    tuner = kt.BayesianOptimization(
+        CustomHyperModel(config, dataset),
         objective="val_loss",
-        max_epochs=30,
+        max_trials=100,
         directory=config.model_tuning_dir,
-        project_name=".",
+        project_name=config.experiment_name,
     )
 
     # Search the space for optimum parameters, use early stopping if no improvement.
@@ -83,7 +115,7 @@ def train_model():
         train_dataset,
         validation_data=val_dataset,
         epochs=30,
-        callbacks=[k.callbacks.EarlyStopping(patience=2)],
+        callbacks=[k.callbacks.EarlyStopping("val_loss", patience=4)],
     )
 
     # Get best hyperparameters
@@ -91,12 +123,54 @@ def train_model():
 
     # Build best model and retrain on full dataset with all callbacks
     model = tuner.hypermodel.build(best_hps)
-    model.fit(train_dataset, validation_data=val_dataset, epochs=50, callbacks=get_callbacks())
 
-    # Save model and its summary
-    with open(config.reports_dir + "tuned_summary.txt") as f:
+    train_dataset = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "train/", best_hps.get("batch_size")
+    )
+    val_dataset = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "val/", best_hps.get("batch_size")
+    )
+
+    start_time = time.time()
+    history = model.fit(
+        train_dataset,
+        validation_data=val_dataset,
+        epochs=50,
+        callbacks=get_callbacks(
+            config.experiment_name, 5, config.model_checkpoints_dir, config.model_logs_dir
+        ),
+    )
+    end_time = time.time()
+
+    # Clean history for saving
+    cleaned_history = clean_history(history.history)
+
+    # Save model
+    model.save(config.model_exports_dir + config.experiment_name + "/tuned_model.keras")
+
+    # Save model summary
+    with open(
+        config.reports_dir + config.experiment_name + "/tuned_summary.txt", "w", encoding="utf-8"
+    ) as f:
         model.summary(print_fn=lambda x: f.write(x + "\n"))
-    model.save(config.model_exports_dir + "tuned_model.keras")
+
+    best_epoch_idx = int(np.argmin(history.history["val_loss"]))
+    best_metrics = {metric: v[best_epoch_idx] for metric, v in cleaned_history.items()}
+
+    # Save model report
+    with open(config.reports_dir + config.experiment_name + "/tuned_desc.txt", "w") as f:
+        f.write(f"Training time: {end_time - start_time:.2f} seconds\n")
+
+        f.write("Hyperparameters: \n")
+        json.dump(best_hps.values, f, indent=4)
+
+        f.write(f"Metrics at best val_loss (Epoch {best_epoch_idx + 1}):\n")
+        for metric, v in best_metrics.items():
+            f.write(f"{metric}: {v:.4f}\n")
+
+    # Save model historu
+    with open(config.reports_dir + config.experiment_name + "/full_history.json", "w") as f:
+        json.dump(cleaned_history, f, indent=4)
 
 
 train_model()

@@ -41,8 +41,7 @@ class Config:
         self.window_size = int(os.getenv("WINDOW_SIZE", 4))
         self.step_size = int(os.getenv("STEP_SIZE", 2))
         self.test_size = float(os.getenv("TEST_SIZE", 0.2))
-        self.val_size = float(os.getenv("VAL_SIZE"), 0.2)
-        self.batch_size = int(os.getenv("BATCH_SIZE", 32))
+        self.val_size = float(os.getenv("VAL_SIZE", 0.2))
 
         # Model
         self.experiment_name = os.getenv("EXPERIMENT_NAME", "default_experiment")
