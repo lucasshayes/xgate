@@ -30,6 +30,7 @@ class CustomHyperModel(kt.HyperModel):
         Returns:
             Model: Model with search space hyperparameters.
         """
+        k.backend.clear_session()
 
         # Model module toggle
         hp.Fixed("xception_bool", self.config.xception_enabled)
@@ -42,7 +43,7 @@ class CustomHyperModel(kt.HyperModel):
         hp.Fixed("beta", self.config.beta)
 
         # Xception Params
-        hp.Int("num_filters", min_value=8, max_value=32, step=8)
+        hp.Int("num_filters", min_value=16, max_value=32, step=8)
         hp.Int("kernel_size", min_value=3, max_value=11, step=2)
         hp.Int("middle_blocks", min_value=1, max_value=3)
 
@@ -50,9 +51,15 @@ class CustomHyperModel(kt.HyperModel):
         hp.Int("r_ratio", min_value=8, max_value=16, step=4)
 
         # Model Params
-        hp.Int("fc_units", min_value=32, max_value=128, step=16)
-        hp.Int("gru_units", min_value=32, max_value=128, step=16)
+        hp.Int("fc_units", min_value=64, max_value=128, step=32)
+        hp.Int("gru_units", min_value=128, max_value=512, step=128)
         hp.Choice("learning_rate", values=[0.01, 0.001, 0.0001])
+        hp.Choice("batch_size", values=[16, 32])
+
+        # Dropout rates
+        hp.Float("gru_dropout", min_value=0.2, max_value=0.6, step=0.2)
+        hp.Float("xception_dropout", min_value=0.2, max_value=0.6, step=0.2)
+        hp.Float("fc_dropout", min_value=0.2, max_value=0.6, step=0.2)
 
         # Instantiate and compile model with hyperparameters
         model = FusedModel.build_and_compile(hp)
@@ -68,10 +75,24 @@ class CustomHyperModel(kt.HyperModel):
         Returns:
             History: The history of the training process.
         """
+        batch_size = hp.get("batch_size")
+
+        train_dataset = self.dataset.create_tf_dataset(
+            self.config.processed_dataset_dir + "train/",
+            batch_size=batch_size,
+        )
+
+        val_dataset = self.dataset.create_tf_dataset(
+            self.config.processed_dataset_dir + "val/",
+            batch_size=batch_size,
+        )
+
         return model.fit(
-            *args,
-            batch_size=hp.Choice("batch_size", [16, 32, 64]),
-            **kwargs,
+            train_dataset,
+            validation_data=val_dataset,
+            epochs=30,
+            callbacks=[k.callbacks.EarlyStopping("val_loss", patience=3)],
+            verbose=1,
         )
 
 
@@ -88,10 +109,6 @@ def train_model():
     config = Config()
     dataset = Dataset(config.random_seed)
 
-    # Create tensorflow datasets from the saved processed datasets with tuned batch size
-    train_dataset = dataset.create_tf_dataset(config.processed_dataset_dir + "train/")
-    val_dataset = dataset.create_tf_dataset(config.processed_dataset_dir + "val/")
-
     # Check for required directories
     for base_dir in [
         config.model_exports_dir,
@@ -105,18 +122,13 @@ def train_model():
     tuner = kt.BayesianOptimization(
         CustomHyperModel(config, dataset),
         objective="val_loss",
-        max_trials=100,
+        max_trials=200,
         directory=config.model_tuning_dir,
         project_name=config.experiment_name,
     )
 
     # Search the space for optimum parameters, use early stopping if no improvement.
-    tuner.search(
-        train_dataset,
-        validation_data=val_dataset,
-        epochs=30,
-        callbacks=[k.callbacks.EarlyStopping("val_loss", patience=4)],
-    )
+    tuner.search()
 
     # Get best hyperparameters
     best_hps = tuner.get_best_hyperparameters(1)[0]
@@ -125,10 +137,10 @@ def train_model():
     model = tuner.hypermodel.build(best_hps)
 
     train_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "train/", best_hps.get("batch_size")
+        config.processed_dataset_dir + "train/", batch_size=best_hps.get("batch_size")
     )
     val_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "val/", best_hps.get("batch_size")
+        config.processed_dataset_dir + "val/", batch_size=best_hps.get("batch_size")
     )
 
     start_time = time.time()
@@ -139,6 +151,7 @@ def train_model():
         callbacks=get_callbacks(
             config.experiment_name, 5, config.model_checkpoints_dir, config.model_logs_dir
         ),
+        verbose=1,
     )
     end_time = time.time()
 
@@ -171,6 +184,5 @@ def train_model():
     # Save model historu
     with open(config.reports_dir + config.experiment_name + "/full_history.json", "w") as f:
         json.dump(cleaned_history, f, indent=4)
-
-
+    
 train_model()

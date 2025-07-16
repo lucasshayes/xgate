@@ -23,13 +23,18 @@ class FusedModel(Model):
         self.xception_bool = hp.get("xception_bool")
         self.cbam_bool = hp.get("cbam_bool")
         self.eca_bool = hp.get("eca_bool")
+        self.xception_dropout_rate = hp.get("xception_dropout")
+        self.gru_dropout_rate = hp.get("gru_dropout")
+        self.fc_dropout_rate = hp.get("fc_dropout")
 
-        self.xception = XceptionBlock(
-            hp.get("num_filters"),
-            hp.get("kernel_size"),
-            hp.get("middle_blocks"),
-            hp.get("downsample"),
-        )
+        if self.xception_bool:
+            self.xception = XceptionBlock(
+                hp.get("num_filters"),
+                hp.get("kernel_size"),
+                hp.get("middle_blocks"),
+                hp.get("downsample"),
+            )
+
         self.cbam = CBAM1D(r_ratio=hp.get("r_ratio"))
         self.eca = TemporalECA(hp.get("gamma"), hp.get("beta"))
 
@@ -54,6 +59,21 @@ class FusedModel(Model):
         self.out = layers.Dense(
             units=3,
             name="output_layer",
+        )
+        self.xception_dropout = (
+            layers.Dropout(self.xception_dropout_rate, name="xception_dropout_layer")
+            if self.xception_dropout_rate > 0
+            else None
+        )
+        self.gru_dropout = (
+            layers.Dropout(self.gru_dropout_rate, name="gru_dropout_layer")
+            if self.gru_dropout_rate > 0
+            else None
+        )
+        self.fc_dropout = (
+            layers.Dropout(self.fc_dropout_rate, name="fc_dropout_layer")
+            if self.fc_dropout_rate > 0
+            else None
         )
 
     def build(self, input_shape):
@@ -97,17 +117,31 @@ class FusedModel(Model):
         else:
             x = self.fc(x)
 
+        if self.xception_dropout and training:
+            x = self.xception_dropout(x, training=training)
+
         if self.cbam_bool:
             x = self.cbam(x)
 
         x = self.gru_1(x)
+
+        if self.gru_dropout and training:
+            x = self.gru_dropout(x, training=training)
+
         x = self.gru_2(x)
 
+        if self.gru_dropout and training:
+            x = self.gru_dropout(x, training=training)
+            
         if self.eca_bool:
             x = self.eca(x)
 
         x = self.bn(x, training=training)
         x = self.fc(x)
+        
+        if self.fc_dropout and training:
+            x = self.fc_dropout(x, training=training)
+            
         return self.out(x)
 
 
