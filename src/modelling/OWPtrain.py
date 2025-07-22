@@ -6,13 +6,12 @@ import numpy as np
 import keras.api as k
 import keras_tuner as kt
 from keras.api import Model
-import tensorflow as tf
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import Config
-from data.dataset import Dataset
-from modelling.model_box import build_fused_model
+from src.data.OWPdataset import Dataset
+from src.modelling.OWPmodel import FusedModel
 from utils.callbacks import get_callbacks
 
 
@@ -63,7 +62,7 @@ class CustomHyperModel(kt.HyperModel):
         hp.Choice("fc_dropout", values=[0.25, 0.5])
 
         # Instantiate and compile model with hyperparameters
-        model = build_fused_model(hp)
+        model = FusedModel.build_and_compile(hp)
         return model
 
     def fit(self, hp: kt.HyperParameters, model: Model, *args, **kwargs):
@@ -87,13 +86,13 @@ class CustomHyperModel(kt.HyperModel):
             self.config.processed_dataset_dir + "val/",
             batch_size=batch_size,
         )
-        
+
         return model.fit(
             train_dataset,
             validation_data=val_dataset,
             epochs=30,
             callbacks=[k.callbacks.EarlyStopping("val_loss", patience=3)],
-            verbose=1,
+            verbose='1',
         )
 
 
@@ -108,8 +107,8 @@ def train_model():
     and saving the best."""
 
     config = Config()
-    dataset = Dataset(config.random_seed, target="true_room")
-    
+    dataset = Dataset(config.random_seed)
+
     # Check for required directories
     for base_dir in [
         config.model_exports_dir,
@@ -119,7 +118,7 @@ def train_model():
     ]:
         os.makedirs(os.path.join(base_dir, config.experiment_name), exist_ok=True)
 
-    # Tune the model according to val_loss
+    # Tune the model according to mean squared error (loss)
     tuner = kt.BayesianOptimization(
         CustomHyperModel(config, dataset),
         objective="val_loss",
@@ -185,7 +184,5 @@ def train_model():
     # Save model historu
     with open(config.reports_dir + config.experiment_name + "/full_history.json", "w") as f:
         json.dump(cleaned_history, f, indent=4)
-
-
-
+    
 train_model()
