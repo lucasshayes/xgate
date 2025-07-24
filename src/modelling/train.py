@@ -52,8 +52,8 @@ class CustomHyperModel(kt.HyperModel):
         hp.Int("r_ratio", min_value=8, max_value=16, step=4)
 
         # Model Params
-        hp.Int("fc_units", min_value=64, max_value=256, step=32)
-        hp.Int("gru_units", min_value=64, max_value=256, step=64)
+        hp.Int("fc_units", min_value=64, max_value=128, step=32)
+        hp.Int("gru_units", min_value=64, max_value=128, step=32)
         hp.Choice("learning_rate", values=[1e-3, 1e-4, 1e-5])
         hp.Choice("batch_size", values=[32, 64])
 
