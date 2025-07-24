@@ -6,7 +6,7 @@ import json
 import tensorflow as tf
 from typing import TypedDict
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import PowerTransformer, LabelEncoder
+from sklearn.preprocessing import PowerTransformer, OneHotEncoder
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -31,7 +31,7 @@ class Dataset():
         self.window_size = window_size
         self.step_size = step_size
         self.p_transformer = PowerTransformer(method='yeo-johnson', standardize=True)
-        self.label_encoder = LabelEncoder().fit(self.gateways)
+        self.ohe_encoder = OneHotEncoder()
 
     def load_raw_data(self, dir: str) -> list[pd.DataFrame]:
         """Loads raw data from the specified directory.
@@ -60,18 +60,50 @@ class Dataset():
             pd.DataFrame: Concatenated DataFrame of training data.
         """
         train_data = pd.concat(dfs, ignore_index=True)
+        
         return train_data
-    
+
     def restructure_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
-        # Pivot the RSSI values for each gateway, fill na with -115 (~10 below min RSSI)
-        rssi = df.pivot_table(index='seqno', columns='gateway', values='rssi', aggfunc='first').fillna(-115)
+        # Pivot the RSSI values for each gateway, fill na with -105 (~min RSSI)
+        rssi = df.pivot_table(index='seqno', columns='gateway', values='rssi', aggfunc='first')
+        print(rssi.head())
         # Group by 'seqno' and flatten the accelerometer, true_room and timestamp cols
         acc = df.groupby('seqno')[self.acc_samples + ['true_room', 'timestamp']].first()
         # Join the dataset back together
         final_df = acc.join(rssi).reset_index()
+        print(final_df.head())
+
         return final_df
+
+    def fit_transforms(self, df: pd.DataFrame):
+        """Fits the normalization transformer to the DataFrame.
+
+        Args:
+            df (pd.DataFrame): The input DataFrame.
+        """
+
+        df = df.copy()
+        # df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.05)  # Add noise to IMU data
+        # df = self.add_noise(df, self.gateways, std=0.005, clip=0.02) # Add noise to RSSI data
+        
+        # Fit the PowerTransformer to the RSSI values
+        self.p_transformer.fit(df[self.gateways])
+        
+        transformed = df.copy()
+        transformed[self.gateways] = self.p_transformer.transform(transformed[self.gateways])
+
+        # Fit the OneHotEncoder to the target column
+        self.ohe_encoder.fit(df[self.target_col].values.reshape(-1, 1))
+
+        global_min = transformed[self.gateways].min()
+        global_max = transformed[self.gateways].max()
+        self.norm['rss'] = {col: (global_min[col], global_max[col]) for col in self.gateways}
+        
+        imu_min = df[self.acc_cols].min()
+        imu_max = df[self.acc_cols].max()
+        self.norm['imu'] = {col: (imu_min[col], imu_max[col]) for col in self.acc_cols}
 
     def expand_acc(self, df: pd.DataFrame) -> pd.DataFrame:
         """Expands the 5 accelerometer samples into separate rows, interpolating RSSI values based on timestamps.
@@ -87,13 +119,16 @@ class Dataset():
         # Slice arrays for setup 
         rssi_now = df[self.gateways].iloc[:-1].to_numpy()
         rssi_next = df[self.gateways].iloc[1:].to_numpy()
-        seqnos = df['seqno'].iloc[1:].to_numpy()
-        # Align targets to next row (end of window later)
-        targets = df[self.target_col].iloc[1:].to_numpy()
+
+        print(f"Number of NaN values in RSSI: {df[self.gateways].isna().sum().sum()}")
+        print(f"Number of non NaN values in RSSI: {df[self.gateways].notna().sum().sum()}")
         
-        # Linearly interpolate RSSI values between samples
-        alpha = np.linspace(0, 1, 5)[:, None]
-        rssi_interp = (1 - alpha) * rssi_now[:, None, :] + alpha * rssi_next[:, None, :]
+        # Align targets to next row (end of window later)
+        seqnos = df['seqno'].iloc[:-1].to_numpy()
+        targets = df[self.target_col].iloc[:-1].to_numpy()
+        
+        # # Linearly interpolate RSSI values between samples
+        rssi_expanded = np.repeat(rssi_now[:, None, :], 5, axis=1)
         
         # Reshape accelerometer data
         acc_raw = df[self.acc_samples].to_numpy().reshape(-1, 5 , 3)
@@ -106,9 +141,21 @@ class Dataset():
             'sample': np.tile(np.arange(1, 6), len(df) - 1),
             self.target_col: np.repeat(targets, 5),
             # **{} is dictionary comprehension for RSSI and acc values
-            **{gateway: rssi_interp[:, :, i].flatten() for i, gateway in enumerate(self.gateways)},
+            **{gateway: rssi_expanded[:, :, i].flatten() for i, gateway in enumerate(self.gateways)},
             **{f'a{axis}': acc_df[:, :, j].flatten() for j, axis in enumerate(axes)}
         })
+        
+        # NOW handle NaN values AND interpolation on the flattened data
+        print(f"Number of NaN values in RSSI AFTER expand: {out[self.gateways].isna().sum().sum()}")
+
+        for gateway in self.gateways:
+            # Interpolate NaN values in RSSI columns
+            out[gateway] = out[gateway].interpolate(method='linear', limit_direction='both')
+            # Forward/backward fill NaN values
+            out[gateway] = out[gateway].ffill().bfill()
+
+        total_nan_final = out[self.gateways].isna().sum().sum()
+        print(f"TOTAL NaN after all handling: {total_nan_final}")
         
         return out
     
@@ -137,14 +184,15 @@ class Dataset():
             
             if len(window) < self.window_size:
                 continue
-            
-            # Save window features, target and identifier
-            X.append(window[self.feature_cols].copy())
-            # Save target as last value in window
-            y.append(window[self.target_col].array[-1])
-            # Save first sort column value as identifier
-            seqnos.append(window[s_cols[0]].array[0])
-        
+            target_values = window[self.target_col].to_numpy()
+            if len(np.unique(target_values)) == 1:
+                # Save window features, target and identifier
+                X.append(window[self.feature_cols].copy())
+                # Save target as last value in window
+                y.append(window[self.target_col].to_numpy()[-1])
+                # Save first sort column value as identifier
+                seqnos.append(window[s_cols[0]].to_numpy()[0])
+
         y = np.array(y)
         seqnos = np.array(seqnos)
 
@@ -184,31 +232,26 @@ class Dataset():
         Returns:
             list[pd.DataFrame]: The list of preprocessed DataFrames.
         """
-        df = pd.concat(X, ignore_index=True)
-        # Add noise for acc + rssi
-        if data_split == "train":
-            df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.05)
-            df = self.add_noise(df, self.gateways, std=0.005, clip=0.02)
-        # Power transform RSS columns
-        df = self.power_transform(df, self.gateways, reuse_norm=(data_split != "train"))
-        # Normalize IMU + RSS columns
-        df = self.normalize(df, self.acc_cols, "imu", reuse_norm=(data_split != "train"))
-        df = self.normalize(df, self.gateways, "rss", reuse_norm=(data_split != "train"))
+        X_processed = []
+        for df in X:
+            df = df.copy()
+            # Add noise for acc + rssi
+            # if data_split == "train":
+            #     df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.05)
+            #     df = self.add_noise(df, self.gateways, std=0.005, clip=0.02)
+            # Power transform RSS columns
+            df = self.power_transform(df, self.gateways)
+            # Normalize IMU + RSS columns
+            df = self.normalize(df, self.acc_cols, "imu")
+            # df = self.normalize(df, self.gateways, "rss")
 
-        # Option to perform ewma smoothing if needed
-        if smooth:
-            df = self.smooth_ewma(df, self.acc_cols)
-            df = self.smooth_ewma(df, self.gateways)
-        
-        X_windowed = []
-        num_windows = len(X)
-        for i in range(num_windows):
-            start = i * self.window_size
-            end = start + self.window_size
-            window_df = df.iloc[start:end]
-            X_windowed.append(window_df)
+            # Option to perform ewma smoothing if needed
+            if smooth:
+                df = self.smooth_ewma(df, self.acc_cols)
+                df = self.smooth_ewma(df, self.gateways)
+            X_processed.append(df)
 
-        return X_windowed
+        return X_processed
 
     def normalize(self, df: pd.DataFrame, cols: list[str], key: str, reuse_norm: bool = True) -> pd.DataFrame:
         """Normalizes the specified columns of a DataFrame to the range [0, 1].
@@ -233,11 +276,13 @@ class Dataset():
             global_max = df[cols].max()
             # Store normalization parameters
             self.norm[key] = {col: (global_min[col], global_max[col]) for col in cols}
-
-        df[cols] = (df[cols] - global_min) / (global_max - global_min + 1e-8)
+        
+        range_vals = global_max - global_min
+        range_vals = range_vals.where(range_vals > 1e-8, 1e-8)  # Avoid division by zero
+        df[cols] = (df[cols] - global_min) / range_vals 
         return df
 
-    def power_transform(self, df: pd.DataFrame, cols: list[str], reuse_norm: bool = True) -> pd.DataFrame:
+    def power_transform(self, df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
         """Applies a power transformation to specified columns in the DataFrame.
         
         Args:
@@ -249,7 +294,7 @@ class Dataset():
             pd.DataFrame: The DataFrame with transformed columns.
         """
         df = df.copy()
-        df[cols] = self.p_transformer.fit_transform(df[cols]) if not reuse_norm else self.p_transformer.transform(df[cols])
+        df[cols] = self.p_transformer.transform(df[cols])
         return df
     
     def smooth_ewma(self, df: pd.DataFrame, cols: list, alpha: float = 0.1) -> pd.DataFrame:
@@ -297,10 +342,26 @@ class Dataset():
             dir (str): The directory to save the data.
         """
         X_array = np.stack([df.to_numpy() for df in X])
-        y = np.array(self.label_encoder.transform(y))
+        y = self.ohe_encoder.transform(y.reshape(-1, 1)).toarray()
 
-        target_classes = {str(i): self.label_encoder.inverse_transform([i])[0] for i in range(len(self.target_classes))}
+        assert not np.isnan(X_array).any(), "NaNs found in input"
+        assert np.all(np.isfinite(X_array)), "Inf or NaN found"
 
+        # Check X array stats
+        print("X shape:", X_array.shape)
+        print("X mean ± std:", X_array.mean(), X_array.std())
+        print("X min/max:", X_array.min(), X_array.max())
+
+        # Check y values
+        print("y unique:", np.unique(y))
+        assert y.min() >= 0
+        
+        target_classes = {}
+        for i, room_name in enumerate(self.ohe_encoder.categories_[0]):
+            ohe = np.zeros(len(self.ohe_encoder.categories_[0]))
+            ohe[i] = 1
+            target_classes[str(ohe.tolist())] = room_name
+        
         os.makedirs(dir, exist_ok=True)
         os.makedirs(os.path.join(dir, data_split), exist_ok=True)
         try:
@@ -334,6 +395,7 @@ class Dataset():
         X = np.load(os.path.join(dir, "X.npy"))
         y = np.load(os.path.join(dir, "y.npy"))
         print(np.unique(y))
+        print(y.shape)
         print(y.dtype)
         seqnos = np.load(os.path.join(dir, "seq_ids.npy"))
 
@@ -342,7 +404,7 @@ class Dataset():
         if shuffle:
             dataset = dataset.shuffle(buffer_size=len(X), seed=self.seed)
 
-        dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        dataset = dataset.batch(batch_size, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
         return dataset
     
 if __name__ == "__main__":
@@ -354,12 +416,13 @@ if __name__ == "__main__":
     train = dataset.load_train_data(train)
 
     dataset.target_classes = train['true_room'].unique().tolist()
-    dataset.label_encoder = dataset.label_encoder.fit(dataset.target_classes)
     print(f"True Rooms: {dataset.target_classes}")
     
     splits = {"train": train, "test": test}
     splits = {key: dataset.restructure_data(split) for key, split in splits.items()}
     splits = {key: dataset.expand_acc(split) for key, split in splits.items()}
+    
+    dataset.fit_transforms(splits['train'])
 
     splits = {key: dataset.create_sliding_windows(split, s_cols=["seqno", "sample"]) for key, split in splits.items()}
     splits['val'], splits['test'] = dataset.split_dataset(splits['test']['X'], splits['test']['y'], splits['test']['seqnos'], test_size=0.5)

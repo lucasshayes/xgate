@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import Config
 from src.data.OWPdataset import Dataset
-from modelling.model import FusedModel
+from src.modelling.OWPmodel import FusedModel
 from utils.callbacks import get_callbacks
 
 class OptunaPruningCallback(Callback):
