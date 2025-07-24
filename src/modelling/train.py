@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import Config
 from data.dataset import Dataset
-from modelling.model_box import build_fused_model
+from modelling.model import build_fused_model
 from utils.callbacks import get_callbacks
 
 
@@ -46,19 +46,19 @@ class CustomHyperModel(kt.HyperModel):
         # Xception Params
         hp.Int("num_filters", min_value=16, max_value=32, step=8)
         hp.Int("kernel_size", min_value=3, max_value=11, step=2)
-        hp.Int("middle_blocks", min_value=1, max_value=3)
+        hp.Int("middle_blocks", min_value=2, max_value=4)
 
         # CBAM reduction ratio
         hp.Int("r_ratio", min_value=8, max_value=16, step=4)
 
         # Model Params
-        hp.Int("fc_units", min_value=64, max_value=128, step=32)
-        hp.Int("gru_units", min_value=128, max_value=512, step=128)
-        hp.Choice("learning_rate", values=[0.01, 0.001, 0.0001])
-        hp.Choice("batch_size", values=[16, 32])
+        hp.Int("fc_units", min_value=64, max_value=256, step=32)
+        hp.Int("gru_units", min_value=64, max_value=256, step=64)
+        hp.Choice("learning_rate", values=[1e-3, 1e-4, 1e-5])
+        hp.Choice("batch_size", values=[32, 64])
 
         # Dropout rates
-        hp.Choice("gru_dropout", values=[0.25, 0.5])
+        hp.Choice("gru_dropout", values=[0.0, 0.2])
         hp.Choice("xception_dropout", values=[0.25, 0.5])
         hp.Choice("fc_dropout", values=[0.25, 0.5])
 

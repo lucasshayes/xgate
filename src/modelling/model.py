@@ -11,9 +11,11 @@ def build_fused_model(hp: HyperParameters):
     Build and compile the FusedModel using Functional API with the passed hyperparameters.
     """
 
-    inputs = k.Input(shape=(200, 7))  # Adjust input shape here if needed
+    inputs = k.Input(shape=(200, 7)) 
     x = inputs
 
+    x = layers.Normalization(name="input_normalization")(x)
+    
     # Xception or FC branch
     if hp.get("xception_bool"):
         x = XceptionBlock(
@@ -34,33 +36,49 @@ def build_fused_model(hp: HyperParameters):
     # CBAM attention
     if hp.get("cbam_bool"):
         x = CBAM1D(r_ratio=hp.get("r_ratio"))(x)
-
+    
+    x = layers.Normalization(name="pre_gru_norm")(x)
+    
     # First GRU layer
     x = layers.GRU(
         units=hp.get("gru_units"),
         return_sequences=True,
         name="gru_layer_1",
+        recurrent_dropout=hp.get("gru_dropout"),
+        dropout=hp.get("gru_dropout"),
+        kernel_constraint=k.constraints.max_norm(2),
+        recurrent_constraint=k.constraints.max_norm(2),
+        kernel_initializer="orthogonal",
+        recurrent_initializer="orthogonal",
     )(x)
-    if hp.get("gru_dropout") > 0:
-        x = layers.Dropout(hp.get("gru_dropout"), name="gru_dropout_layer_1")(x)
 
     # Second GRU layer
     x = layers.GRU(
         units=hp.get("gru_units"),
         return_sequences=True,
         name="gru_layer_2",
+        recurrent_dropout=hp.get("gru_dropout"),
+        dropout=hp.get("gru_dropout"),
+        kernel_constraint=k.constraints.max_norm(2),
+        recurrent_constraint=k.constraints.max_norm(2),
+        kernel_initializer="orthogonal",
+        recurrent_initializer="orthogonal",
     )(x)
-    if hp.get("gru_dropout") > 0:
-        x = layers.Dropout(hp.get("gru_dropout"), name="gru_dropout_layer_2")(x)
-
+    
+    x = layers.LayerNormalization(name="pre_attention_norm")(x)
+    
     # Temporal ECA attention
     if hp.get("eca_bool"):
         x = TemporalECA(hp.get("gamma"), hp.get("beta"))(x)
+
+    x = layers.GlobalAvgPool1D(name="global_avg_pool")(x)
 
     # Fully connected dense layer
     x = layers.Dense(
         units=hp.get("fc_units"),
         activation="relu",
+        kernel_initializer="he_normal",
+        kernel_constraint=k.constraints.max_norm(2),
         name="fc_layer_2",
     )(x)
     if hp.get("fc_dropout") > 0:
@@ -69,14 +87,16 @@ def build_fused_model(hp: HyperParameters):
     # Output layer
     outputs = layers.Dense(
         units=4,
-        activation="softmax",
+        activation="softmax", 
         name="output_layer",
+        kernel_initializer=k.initializers.RandomNormal(stddev=0.1),
+        kernel_constraint=k.constraints.max_norm(2.0)
     )(x)
 
     model = k.Model(inputs=inputs, outputs=outputs, name="fused_model")
 
     model.compile(
-        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate")),
+        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate"), clipnorm=0.5),
         loss=k.losses.SparseCategoricalCrossentropy(from_logits=False),
         metrics=["sparse_categorical_accuracy"],
     )
@@ -113,6 +133,6 @@ if __name__ == "__main__":
 
     model = build_fused_model(hp)
 
-    dummy_input = k.random.normal((1, 200, 11))
+    dummy_input = k.random.normal((1, 200, 7))
     _ = model(dummy_input)
     model.summary()
