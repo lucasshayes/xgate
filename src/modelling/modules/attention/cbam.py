@@ -1,5 +1,5 @@
 import tensorflow as tf
-from keras import layers, activations
+from keras import layers
 from keras import Sequential
 
 
@@ -10,8 +10,18 @@ class CBAM1D(layers.Layer):
 
     def build(self, input_shape):
         channel = input_shape[-1]
-
-        # Channel attention MLP
+        
+        # Feature (channel) attention layers
+        self.feature_avg = layers.Lambda(
+            lambda x: tf.reduce_mean(x, axis=-1, keepdims=True),
+            name=f"{self.name}_feature_avg",
+        )
+        
+        self.feature_max = layers.Lambda(
+            lambda x: tf.reduce_max(x, axis=-1, keepdims=True),
+            name=f"{self.name}_feature_max",
+        )
+        
         self.shared_mlp = Sequential(
             [
                 layers.Dense(channel // self.r_ratio, activation="relu"),
@@ -19,9 +29,25 @@ class CBAM1D(layers.Layer):
             ],
             name=f"{self.name}_shared_mlp",
         )
+        
+        self.feature_add = layers.Add(name=f"{self.name}_feature_add")
+        self.feature_sigmoid = layers.Activation("sigmoid", name=f"{self.name}_feature_sigmoid") 
+        self.feature_mul = layers.Multiply(name=f"{self.name}_feature_mul")
 
-        # Spatial attention conv layer (no bias)
-        self.spatial_conv = layers.Conv1D(
+        # Temporal (spatial) attention layers
+        self.temporal_avg = layers.Lambda(
+            lambda x: tf.reduce_mean(x, axis=1, keepdims=True),
+            name=f"{self.name}_temporal_avg",
+        )
+        
+        self.temporal_max = layers.Lambda(
+            lambda x: tf.reduce_max(x, axis=1, keepdims=True),
+            name=f"{self.name}_temporal_max",
+        )
+        
+        self.temporal_concat = layers.Concatenate(axis=-1, name=f"{self.name}_concat")
+        
+        self.temporal_conv = layers.Conv1D(
             filters=1,
             kernel_size=7,
             padding="same",
@@ -29,26 +55,31 @@ class CBAM1D(layers.Layer):
             use_bias=False,
             name=f"{self.name}_spatial_conv",
         )
+        
+        # Final layers
+        self.final_mul = layers.Multiply(name=f"{self.name}_final_mul")
+        self.res_add = layers.Add(name=f"{self.name}_residual_add")
 
     def call(self, inputs):
         # Feature (channel) attention
-        avg_pool = tf.reduce_mean(inputs, axis=1, keepdims=True)
-        max_pool = tf.reduce_max(inputs, axis=1, keepdims=True)
+        avg_pool = self.feature_avg(inputs)
+        max_pool = self.feature_max(inputs)
 
         avg_out = self.shared_mlp(avg_pool)
         max_out = self.shared_mlp(max_pool)
 
-        channel_att = activations.sigmoid(avg_out + max_out)
-        channel_refined = inputs * channel_att
+        channel_att = self.feature_sigmoid(self.feature_add([avg_out, max_out]))
+        channel_refined = self.feature_mul([inputs, channel_att])
 
         # Temporal (spatial) attention
-        avg_pool = tf.reduce_mean(channel_refined, axis=-1, keepdims=True)
-        max_pool = tf.reduce_max(channel_refined, axis=-1, keepdims=True)
+        avg_pool = self.temporal_avg(channel_refined)
+        max_pool = self.temporal_max(channel_refined)
 
-        concat = tf.concat([avg_pool, max_pool], axis=-1)
-        spatial_att = self.spatial_conv(concat)
+        concat = self.temporal_concat([avg_pool, max_pool])
+        spatial_att = self.temporal_conv(concat)
 
-        return channel_att * spatial_att
+        cbam_final = self.final_mul([channel_refined, spatial_att])
+        return self.res_add([inputs, cbam_final])
 
     def compute_output_shape(self, input_shape):
         return input_shape

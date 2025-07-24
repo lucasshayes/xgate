@@ -16,10 +16,12 @@ class TemporalECA(layers.Layer):
         t = int(abs((np.log2(channel) + self.b) / self.gamma))
         k_size = t if t % 2 else t + 1
 
+        # Summarizes each time step
         self.squeeze = layers.Lambda(
             lambda x: ops.mean(x, axis=-1, keepdims=True),
             name=f"{self.name}_squeeze",
         )
+        # Conv over time
         self.excite = layers.Conv1D(
             filters=1,
             kernel_size=k_size,
@@ -40,8 +42,8 @@ class TemporalECA(layers.Layer):
         squeeze = self.squeeze(inputs)
         excite = self.excite(squeeze)
         scaled = self.scale([inputs, excite])
-        weighted_pool = self.weighted_pool(scaled)
-        return weighted_pool
+        # weighted_pool = self.weighted_pool(scaled)
+        return scaled
 
     def compute_output_shape(self, input_shape):
         return input_shape
