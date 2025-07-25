@@ -30,7 +30,7 @@ class XceptionBlock(layers.Layer):
 
         self.conv1 = layers.Conv1D(
             filters=num_filters, kernel_size=k_size, padding="same", name=f"{name}_conv1d_1",
-            strides=1, kernel_initializer="he_normal", kernel_constraint=k.constraints.max_norm(3)   
+            strides=2, kernel_initializer="he_normal", kernel_constraint=k.constraints.max_norm(3)   
         )
         self.bn1 = layers.BatchNormalization(name=f"{name}_bn_1")
         self.relu1 = layers.ReLU(name=f"{name}_ReLU_1")
@@ -88,8 +88,7 @@ class XceptionBlock(layers.Layer):
 
     def call(self, inputs, training=None):
         # Block 1
-        x = k.ops.transpose(inputs, (0, 2, 1))
-        x = self.conv1(x)
+        x = self.conv1(inputs)
         x = self.bn1(x, training=training)
         x = self.relu1(x)
         
@@ -117,8 +116,6 @@ class XceptionBlock(layers.Layer):
         
         if self.downsample:
             x = self.downsample(x)
-
-        x = k.ops.transpose(x, (0, 2, 1))
 
         return x
 

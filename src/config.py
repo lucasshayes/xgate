@@ -32,6 +32,7 @@ class Config:
         load_dotenv(override=True)
 
         # Dataset
+        self.preprocess_type = os.getenv("PREPROCESS_TYPE", "seperate")
         # -- Directories
         self.external_dataset_dir = os.getenv("EXTERNAL_DATASET_DIR", "data/external/OWP-IMU/")
         self.raw_dataset_dir = os.getenv("RAW_DATASET_DIR", "data/raw/")

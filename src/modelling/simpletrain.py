@@ -45,7 +45,7 @@ hps = {
 
 model = Sequential(
     [
-        layers.Input(shape=(200, 7)),
+        layers.Input(shape=(100, 7)),
         layers.Normalization(name="input_normalization"),
         XceptionBlock(
             **hps["xception"]

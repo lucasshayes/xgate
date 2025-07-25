@@ -409,7 +409,7 @@ class Dataset():
 if __name__ == "__main__":
     # Example usage
     config = Config()
-    dataset = Dataset(config.random_seed, target='true_room')
+    dataset = Dataset(config.random_seed, target='true_room', window_size=config.window_size, step_size=config.step_size)
     train = dataset.load_raw_data(config.external_dataset_dir + "train/")
     test = dataset.load_raw_data(config.external_dataset_dir + "test/")[0]
     train = dataset.load_train_data(train)

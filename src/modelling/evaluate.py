@@ -5,7 +5,7 @@ import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from config import Config
-from data.dataset import Dataset
+from src.data.OWPdataset import Dataset
 from utils.metrics import p_ecdf, euclidean_distance, ecdf
 
 
