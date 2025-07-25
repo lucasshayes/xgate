@@ -42,8 +42,8 @@ class TemporalECA(layers.Layer):
         squeeze = self.squeeze(inputs)
         excite = self.excite(squeeze)
         scaled = self.scale([inputs, excite])
-        # weighted_pool = self.weighted_pool(scaled)
-        return scaled
+        weighted_pool = self.weighted_pool(scaled)
+        return weighted_pool
 
     def compute_output_shape(self, input_shape):
         return input_shape

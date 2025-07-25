@@ -392,14 +392,13 @@ class Dataset():
         if not os.path.exists(dir):
             raise FileNotFoundError(f"Directory {dir} does not exist.")
         
-        X = np.load(os.path.join(dir, "X.npy"))
-        y = np.load(os.path.join(dir, "y.npy"))
+        X = np.load(os.path.join(dir, "X.npy")).astype(np.float32)
+        y = np.load(os.path.join(dir, "y.npy")).astype(np.float32)
         print(np.unique(y))
         print(y.shape)
         print(y.dtype)
-        seqnos = np.load(os.path.join(dir, "seq_ids.npy"))
 
-        dataset = tf.data.Dataset.from_tensor_slices((X, y, seqnos))
+        dataset = tf.data.Dataset.from_tensor_slices((X, y))
         
         if shuffle:
             dataset = dataset.shuffle(buffer_size=len(X), seed=self.seed)

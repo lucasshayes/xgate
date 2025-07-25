@@ -45,11 +45,11 @@ class CustomHyperModel(kt.HyperModel):
 
         # Xception Params
         hp.Int("num_filters", min_value=16, max_value=32, step=8)
-        hp.Int("kernel_size", min_value=3, max_value=11, step=2)
+        hp.Int("kernel_size", min_value=3, max_value=7, step=2)
         hp.Int("middle_blocks", min_value=2, max_value=4)
 
         # CBAM reduction ratio
-        hp.Int("r_ratio", min_value=8, max_value=16, step=4)
+        hp.Int("r_ratio", min_value=8, max_value=16, step=8)
 
         # Model Params
         hp.Int("fc_units", min_value=64, max_value=128, step=32)
@@ -58,7 +58,7 @@ class CustomHyperModel(kt.HyperModel):
         hp.Choice("batch_size", values=[32, 64])
 
         # Dropout rates
-        hp.Choice("gru_dropout", values=[0.0, 0.2])
+        hp.Choice("gru_dropout", values=[0.0, 0.1])
         hp.Choice("xception_dropout", values=[0.25, 0.5])
         hp.Choice("fc_dropout", values=[0.25, 0.5])
 

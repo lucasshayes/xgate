@@ -37,8 +37,6 @@ def build_fused_model(hp: HyperParameters):
     if hp.get("cbam_bool"):
         x = CBAM1D(r_ratio=hp.get("r_ratio"))(x)
     
-    x = layers.Normalization(name="pre_gru_norm")(x)
-    
     # First GRU layer
     x = layers.GRU(
         units=hp.get("gru_units"),
@@ -65,13 +63,9 @@ def build_fused_model(hp: HyperParameters):
         recurrent_initializer="orthogonal",
     )(x)
     
-    x = layers.LayerNormalization(name="pre_attention_norm")(x)
-    
     # Temporal ECA attention
     if hp.get("eca_bool"):
         x = TemporalECA(hp.get("gamma"), hp.get("beta"))(x)
-
-    x = layers.GlobalAvgPool1D(name="global_avg_pool")(x)
 
     # Fully connected dense layer
     x = layers.Dense(
