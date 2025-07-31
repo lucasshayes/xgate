@@ -1,212 +1,128 @@
+import keras as k
 from keras import layers
-import keras.api as k
 
+def xception_block(inputs, num_filters=32, k_size=3, middle_blocks=2, downsample=False, name="xception"):
+    # Block 1
+    x = layers.Conv1D(
+        filters=num_filters, kernel_size=k_size, padding="same", 
+        strides=2, kernel_initializer="he_normal", 
+        kernel_constraint=k.constraints.max_norm(3),
+        name=f"{name}_conv1d_1"
+    )(inputs)
+    x = layers.BatchNormalization(name=f"{name}_bn_1")(x)
+    x = layers.ReLU(name=f"{name}_ReLU_1")(x)
+    
+    # Block 2
+    x = layers.Conv1D(
+        filters=num_filters*2, kernel_size=k_size, padding="same", 
+        kernel_initializer="he_normal", kernel_constraint=k.constraints.max_norm(3),
+        name=f"{name}_conv1d_2"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_bn_2")(x)
+    x = layers.ReLU(name=f"{name}_ReLU_2")(x)
 
-class XceptionBlock(layers.Layer):
-    def __init__(
-        self,
-        num_filters=32,
-        k_size=3,
-        middle_blocks=2,
-        downsample=False,
-        name="xception",
-        **kwargs,
-    ):
-        super().__init__(name=name, **kwargs)
-        self.num_filters = num_filters
-        self.k_size = k_size
-        self.middle_blocks = middle_blocks
-        self.downsample_enabled = downsample
-        self.block_name = name
+    # Setup residual connection
+    residual = x
+    
+    # Separable convolutions
+    x = layers.SeparableConv1D(
+        filters=num_filters * 4, kernel_size=3, padding="same",
+        depthwise_initializer="he_normal", pointwise_initializer="he_normal",
+        depthwise_constraint=k.constraints.max_norm(3),
+        pointwise_constraint=k.constraints.max_norm(3),
+        name=f"{name}_sep_conv1"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_sep_bn1")(x)
+    x = layers.ReLU(name=f"{name}_ReLU_3")(x)
+    
+    x = layers.SeparableConv1D(
+        filters=num_filters * 4, kernel_size=3, padding="same",
+        depthwise_initializer="he_normal", pointwise_initializer="he_normal",
+        depthwise_constraint=k.constraints.max_norm(3),
+        pointwise_constraint=k.constraints.max_norm(3),
+        name=f"{name}_sep_conv2"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_sep_bn2")(x)
 
-        self.middle_blocks_layers = []
-        self.downsample = None
+    # Residual layers
+    if residual.shape[-1] != num_filters * 4:
+        residual = layers.Conv1D(
+            filters=num_filters*4, kernel_size=1, padding="same",
+            kernel_initializer='he_normal', kernel_constraint=k.constraints.max_norm(3),
+            name=f"{name}_residual_conv"
+        )(residual)
+        residual = layers.BatchNormalization(name=f"{name}_residual_bn")(residual)
+    
+    # Add residual connection
+    x = layers.Add(name=f"{name}_add")([x, residual])
+    
+    # Middle blocks
+    for i in range(middle_blocks):
+        x = middle_block(x, num_filters * 4, i, name=name)
+    
+    # Optional downsampling
+    if downsample:
+        x = layers.AveragePooling1D(pool_size=2, name=f"{name}_downsample")(x)
 
-    def build(self, input_shape):
-        name = self.block_name
-        num_filters = self.num_filters
-        k_size = self.k_size
+    return x
 
+def middle_block(inputs, filters, i, name="xception"):
 
-        self.conv1 = layers.Conv1D(
-            filters=num_filters, kernel_size=k_size, padding="same", name=f"{name}_conv1d_1",
-            strides=2, kernel_initializer="he_normal", kernel_constraint=k.constraints.max_norm(3)   
-        )
-        self.bn1 = layers.BatchNormalization(name=f"{name}_bn_1")
-        self.relu1 = layers.ReLU(name=f"{name}_ReLU_1")
+    # Setup residual connection
+    residual = inputs
+    
+    # Three separable convolutions
+    x = layers.ReLU(name=f"{name}_middle_{i}_relu_1")(inputs)
+    x = layers.SeparableConv1D(
+        filters, 3, padding="same", use_bias=False,
+        depthwise_initializer="he_normal", pointwise_initializer="he_normal",
+        depthwise_constraint=k.constraints.max_norm(3),
+        pointwise_constraint=k.constraints.max_norm(3),
+        name=f"{name}_middle_{i}_conv1d_1"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_middle_{i}_bn_1")(x)
 
-        self.conv2 = layers.Conv1D(
-            filters=num_filters*2, kernel_size=k_size, padding="same", name=f"{name}_conv1d_2", kernel_initializer="he_normal", kernel_constraint=k.constraints.max_norm(3)
-        )
-        self.bn2 = layers.BatchNormalization(name=f"{name}_bn_2")
-        self.relu2 = layers.ReLU(name=f"{name}_ReLU_2")
+    x = layers.ReLU(name=f"{name}_middle_{i}_relu_2")(x)
+    x = layers.SeparableConv1D(
+        filters, 3, padding="same", use_bias=False,
+        depthwise_initializer="he_normal", pointwise_initializer="he_normal",
+        depthwise_constraint=k.constraints.max_norm(3),
+        pointwise_constraint=k.constraints.max_norm(3),
+        name=f"{name}_middle_{i}_conv1d_2"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_middle_{i}_bn_2")(x)
 
-        self.sep_conv1 = layers.SeparableConv1D(
-            filters=num_filters * 4, kernel_size=3, padding="same",
-            name=f"{name}_sep_conv1",
-            depthwise_initializer="he_normal",
-            pointwise_initializer="he_normal",
-            depthwise_constraint=k.constraints.max_norm(3),
-            pointwise_constraint=k.constraints.max_norm(3)
-        )
-        self.sep_bn1 = layers.BatchNormalization(name=f"{name}_sep_bn1")
-        self.relu3 = layers.ReLU(name=f"{name}_ReLU_3")
-        
-        self.sep_conv2 = layers.SeparableConv1D(
-            filters=num_filters * 4, kernel_size=3, padding="same",
-            name=f"{name}_sep_conv2",
-            depthwise_initializer="he_normal",
-            pointwise_initializer="he_normal",
-            depthwise_constraint=k.constraints.max_norm(3),
-            pointwise_constraint=k.constraints.max_norm(3)
-        )
-        self.sep_bn2 = layers.BatchNormalization(name=f"{name}_sep_bn2")
+    x = layers.ReLU(name=f"{name}_middle_{i}_relu_3")(x)
+    x = layers.SeparableConv1D(
+        filters, 3, padding="same", use_bias=False,
+        depthwise_initializer='he_normal', pointwise_initializer='he_normal',
+        depthwise_constraint=k.constraints.max_norm(3),
+        pointwise_constraint=k.constraints.max_norm(3),
+        name=f"{name}_middle_{i}_conv1d_3"
+    )(x)
+    x = layers.BatchNormalization(name=f"{name}_middle_{i}_bn_3")(x)
 
-        self.maxpool = layers.MaxPooling1D(pool_size=3, strides=2, padding="same", name=f"{name}_maxpool")
-        
-        if input_shape[-1] != num_filters * 4:
-            self.residual_conv = layers.Conv1D(
-                filters=num_filters*4,
-                kernel_size=1,
-                padding="same",
-                name=f"{name}_residual_conv",
-                kernel_initializer='he_normal',
-                kernel_constraint=k.constraints.max_norm(3.0),
-            )
-            self.residual_bn = layers.BatchNormalization(name=f"{name}_residual_bn")
-        else:
-            self.residual_conv = None
-        
-        self.add = layers.Add(name=f"{name}_add")
-        
-        self.middle_blocks_layers = [
-            MiddleBlock(num_filters * 4, i, name=name) for i in range(self.middle_blocks)
-        ]
+    # Residual layers
+    if residual.shape[-1] != filters:
+        residual = layers.Conv1D(
+            filters, 1, padding="same", use_bias=False,
+            kernel_initializer='he_normal', kernel_constraint=k.constraints.max_norm(3),
+            name=f"{name}_middle_{i}_residual_conv"
+        )(residual)
+        residual = layers.BatchNormalization(name=f"{name}_middle_{i}_residual_bn")(residual)
 
-        if self.downsample_enabled:
-            self.downsample = layers.AveragePooling1D(pool_size=2, name=f"{name}_downsample")
+    # Add residual connection
+    x = layers.Add(name=f"{name}_middle_{i}_residual")([x, residual])
+    return x
 
-    def call(self, inputs, training=None):
-        # Block 1
-        x = self.conv1(inputs)
-        x = self.bn1(x, training=training)
-        x = self.relu1(x)
-        
-        x = self.conv2(x)
-        x = self.bn2(x, training=training)
-        x = self.relu2(x)
-
-        residual = x
-        
-        x = self.sep_conv1(x)
-        x = self.sep_bn1(x, training=training)
-        x = self.relu3(x)
-        
-        x = self.sep_conv2(x)
-        x = self.sep_bn2(x, training=training)
-
-        if self.residual_conv:
-            residual = self.residual_conv(residual)
-            residual = self.residual_bn(residual, training=training)
-        
-        x = self.add([x, residual])
-        
-        for block in self.middle_blocks_layers:
-            x = block(x, training=training)
-        
-        if self.downsample:
-            x = self.downsample(x)
-
-        return x
-
-    def compute_output_shape(self, input_shape):
-        channels = self.num_filters * 4
-        length = input_shape[1] // 2 if self.downsample_enabled else input_shape[1]
-        return (input_shape[0], length, channels)
-
-
-class MiddleBlock(layers.Layer):
-    def __init__(self, filters, i, name="xception", **kwargs):
-        super().__init__(name=f"{name}_middle_block_{i}", **kwargs)
-        self.filters = filters
-        self.name = name
-        self.i = i
-
-    def build(self, input_shape):
-        i = self.i
-        filters = self.filters
-        name = self.name
-
-        self.relu1 = layers.ReLU(name=f"{name}_ReLU_{(i * 3)-1}")
-        self.sepconv1 = layers.SeparableConv1D(
-            filters, 3, padding="same", use_bias=False,
-            name=f"{name}_conv1d_{(i * 3) + 2}",
-            depthwise_initializer="he_normal",
-            pointwise_initializer="he_normal",
-            depthwise_constraint=k.constraints.max_norm(3),
-            pointwise_constraint=k.constraints.max_norm(3)
-        )
-        self.bn1 = layers.BatchNormalization(name=f"{name}_bn_{(i * 3) + 2}")
-        self.relu2 = layers.ReLU(name=f"{name}_ReLU_{(i * 3)}")
-        self.sepconv2 = layers.SeparableConv1D(
-            filters, 3, padding="same", use_bias=False,
-            name=f"{name}_conv1d_{(i * 3) + 3}",
-            depthwise_initializer="he_normal",
-            pointwise_initializer="he_normal",
-            depthwise_constraint=k.constraints.max_norm(3),
-            pointwise_constraint=k.constraints.max_norm(3)
-        )
-        self.bn2 = layers.BatchNormalization(name=f"{name}_bn_{(i * 3) + 3}")
-        self.relu3 = layers.ReLU(name=f"{name}_ReLU_{(i * 3) + 1}")
-        self.sepconv3 = layers.SeparableConv1D(
-            filters, 3, padding="same", use_bias=False,
-            name=f"{name}_conv1d_{(i * 3) + 4}",
-            depthwise_initializer='he_normal',
-            pointwise_initializer='he_normal',
-            depthwise_constraint=k.constraints.max_norm(3.0),
-            pointwise_constraint=k.constraints.max_norm(3.0),
-        )
-        self.bn3 = layers.BatchNormalization(name=f"{name}_bn_{(i * 3) + 4}")
-        self.add = layers.Add(name=f"{name}_residual_{i}")
-
-        if input_shape[-1] != self.filters:
-            self.res_conv = layers.Conv1D(
-                self.filters, 1, padding="same", use_bias=False,
-                name=f"{name}_residual_conv_{i}",
-                kernel_initializer='he_normal',
-                kernel_constraint=k.constraints.max_norm(3.0),
-            )
-            self.res_bn = layers.BatchNormalization(name=f"{name}_residual_bn_{i}")
-        else:
-            self.res_conv = None
-
-    def call(self, inputs, training=None):
-        res = inputs
-        x = self.relu1(inputs)
-        x = self.sepconv1(x)
-        x = self.bn1(x, training=training)
-
-        x = self.relu2(x)
-        x = self.sepconv2(x)
-        x = self.bn2(x, training=training)
-
-        x = self.relu3(x)
-        x = self.sepconv3(x)
-        x = self.bn3(x, training=training)
-
-        if self.res_conv:
-            res = self.res_conv(inputs)
-            res = self.res_bn(res, training=training)
-
-        x = self.add([x, res])
-        return x
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[1], self.filters)
-
-
+# Example usage:
 if __name__ == "__main__":
-    xception = XceptionBlock()
-    dummy_input = k.random.normal((1, 200, 7))
-    output = xception(dummy_input)
-    print(output.shape)
+    # Create a simple model for testing
+    inputs = layers.Input(shape=(200, 7))
+    x = xception_block(inputs, num_filters=32, middle_blocks=2)
+    x = layers.GlobalAveragePooling1D()(x)
+    outputs = layers.Dense(10, activation='softmax')(x)
+    
+    model = k.Model(inputs, outputs)
+    model.summary()
+    

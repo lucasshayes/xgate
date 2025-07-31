@@ -1,9 +1,9 @@
 from keras import layers, Model
 from keras_tuner import HyperParameters
-import keras.api as k
-from modules.xception import XceptionBlock
-from modules.attention.cbam import CBAM1D
-from modules.attention.temporal_eca import TemporalECA
+import keras as k
+from modules.xception import xception_block
+from modules.attention.cbam import cbam_1d_block
+from modules.attention.temporal_eca import temporal_eca_block
 
 
 def build_fused_model(hp: HyperParameters):
@@ -11,19 +11,20 @@ def build_fused_model(hp: HyperParameters):
     Build and compile the FusedModel using Functional API with the passed hyperparameters.
     """
 
-    inputs = k.Input(shape=(200, 7)) 
+    inputs = k.Input(shape=(50, 7)) 
     x = inputs
 
     x = layers.Normalization(name="input_normalization")(x)
     
     # Xception or FC branch
     if hp.get("xception_bool"):
-        x = XceptionBlock(
-            hp.get("num_filters"),
-            hp.get("kernel_size"),
-            hp.get("middle_blocks"),
-            hp.get("downsample"),
-        )(x)
+        x = xception_block(
+            x,
+            num_filters=hp.get("num_filters"),
+            k_size=hp.get("kernel_size"),
+            middle_blocks=hp.get("middle_blocks"),
+            downsample=hp.get("downsample"),
+        )
         if hp.get("xception_dropout") > 0:
             x = layers.Dropout(hp.get("xception_dropout"), name="xception_dropout_layer")(x)
     else:
@@ -35,7 +36,7 @@ def build_fused_model(hp: HyperParameters):
 
     # CBAM attention
     if hp.get("cbam_bool"):
-        x = CBAM1D(r_ratio=hp.get("r_ratio"))(x)
+        x = cbam_1d_block(x, r_ratio=hp.get("r_ratio"))
     
     # First GRU layer
     x = layers.GRU(
@@ -44,8 +45,8 @@ def build_fused_model(hp: HyperParameters):
         name="gru_layer_1",
         recurrent_dropout=hp.get("gru_dropout"),
         dropout=hp.get("gru_dropout"),
-        kernel_constraint=k.constraints.max_norm(2),
-        recurrent_constraint=k.constraints.max_norm(2),
+        kernel_constraint=k.constraints.max_norm(3),
+        recurrent_constraint=k.constraints.max_norm(3),
         kernel_initializer="orthogonal",
         recurrent_initializer="orthogonal",
     )(x)
@@ -57,22 +58,22 @@ def build_fused_model(hp: HyperParameters):
         name="gru_layer_2",
         recurrent_dropout=hp.get("gru_dropout"),
         dropout=hp.get("gru_dropout"),
-        kernel_constraint=k.constraints.max_norm(2),
-        recurrent_constraint=k.constraints.max_norm(2),
+        kernel_constraint=k.constraints.max_norm(3),
+        recurrent_constraint=k.constraints.max_norm(3),
         kernel_initializer="orthogonal",
         recurrent_initializer="orthogonal",
     )(x)
     
     # Temporal ECA attention
     if hp.get("eca_bool"):
-        x = TemporalECA(hp.get("gamma"), hp.get("beta"))(x)
+        x = temporal_eca_block(x, gamma=hp.get("gamma"), b=hp.get("beta"), name="temporal_eca")
 
     # Fully connected dense layer
     x = layers.Dense(
         units=hp.get("fc_units"),
         activation="relu",
         kernel_initializer="he_normal",
-        kernel_constraint=k.constraints.max_norm(2),
+        kernel_constraint=k.constraints.max_norm(3),
         name="fc_layer_2",
     )(x)
     if hp.get("fc_dropout") > 0:
@@ -84,15 +85,15 @@ def build_fused_model(hp: HyperParameters):
         activation="softmax", 
         name="output_layer",
         kernel_initializer=k.initializers.RandomNormal(stddev=0.1),
-        kernel_constraint=k.constraints.max_norm(2.0)
+        kernel_constraint=k.constraints.max_norm(3)
     )(x)
 
     model = k.Model(inputs=inputs, outputs=outputs, name="fused_model")
 
     model.compile(
-        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate"), clipnorm=0.5),
-        loss=k.losses.SparseCategoricalCrossentropy(from_logits=False),
-        metrics=["sparse_categorical_accuracy"],
+        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate"), clipnorm=1.0),
+        loss="categorical_crossentropy",
+        metrics=["categorical_accuracy"],
     )
 
     return model
@@ -127,6 +128,6 @@ if __name__ == "__main__":
 
     model = build_fused_model(hp)
 
-    dummy_input = k.random.normal((1, 200, 7))
+    dummy_input = k.random.normal((1, 50, 7))
     _ = model(dummy_input)
     model.summary()

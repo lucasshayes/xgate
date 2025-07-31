@@ -32,7 +32,6 @@ class Config:
         load_dotenv(override=True)
 
         # Dataset
-        self.preprocess_type = os.getenv("PREPROCESS_TYPE", "seperate")
         # -- Directories
         self.external_dataset_dir = os.getenv("EXTERNAL_DATASET_DIR", "data/external/OWP-IMU/")
         self.raw_dataset_dir = os.getenv("RAW_DATASET_DIR", "data/raw/")
@@ -41,8 +40,9 @@ class Config:
         self.sample_rate = int(os.getenv("SAMPLE_RATE", 200))
         self.window_size = int(os.getenv("WINDOW_SIZE", 4))
         self.step_size = int(os.getenv("STEP_SIZE", 2))
-        self.test_size = float(os.getenv("TEST_SIZE", 0.2))
         self.val_size = float(os.getenv("VAL_SIZE", 0.2))
+        # -- Batch Size
+        self.batch_size = int(os.getenv("BATCH_SIZE", 32))
 
         # Model
         self.experiment_name = os.getenv("EXPERIMENT_NAME", "default_experiment")

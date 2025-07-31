@@ -77,16 +77,14 @@ class Dataset():
 
         return final_df
 
-    def fit_transforms(self, df: pd.DataFrame):
+    def fit_transforms(self, X_train: list[pd.DataFrame], y_train: np.ndarray):
         """Fits the normalization transformer to the DataFrame.
 
         Args:
-            df (pd.DataFrame): The input DataFrame.
+            X_train (list[pd.DataFrame]): The input DataFrames.
+            y_train (np.ndarray): The target values for training.
         """
-
-        df = df.copy()
-        # df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.05)  # Add noise to IMU data
-        # df = self.add_noise(df, self.gateways, std=0.005, clip=0.02) # Add noise to RSSI data
+        df = pd.concat(X_train, ignore_index=True)
         
         # Fit the PowerTransformer to the RSSI values
         self.p_transformer.fit(df[self.gateways])
@@ -95,14 +93,14 @@ class Dataset():
         transformed[self.gateways] = self.p_transformer.transform(transformed[self.gateways])
 
         # Fit the OneHotEncoder to the target column
-        self.ohe_encoder.fit(df[self.target_col].values.reshape(-1, 1))
+        self.ohe_encoder.fit(y_train.reshape(-1, 1))
 
         global_min = transformed[self.gateways].min()
         global_max = transformed[self.gateways].max()
         self.norm['rss'] = {col: (global_min[col], global_max[col]) for col in self.gateways}
-        
-        imu_min = df[self.acc_cols].min()
-        imu_max = df[self.acc_cols].max()
+
+        imu_min = transformed[self.acc_cols].min()
+        imu_max = transformed[self.acc_cols].max()
         self.norm['imu'] = {col: (imu_min[col], imu_max[col]) for col in self.acc_cols}
 
     def expand_acc(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -199,7 +197,7 @@ class Dataset():
         return {'X': X, 'y': y, 'seqnos': seqnos}
     
     def split_dataset(self, X: list[pd.DataFrame], y: np.ndarray, seqnos: np.ndarray, test_size: float) -> tuple[WindowedData, WindowedData]:
-        """Splits the test dataset into validation and test sets.
+        """Splits the dataset into training and test sets.
 
         Args:
             X (list[pd.DataFrame]): Windowed feature dataframe
@@ -208,7 +206,7 @@ class Dataset():
             test_size (float): Proportion of the dataset to include in the test set.
 
         Returns:
-            tuple[dict, dict]: Validation and test sets.
+            tuple[dict, dict]: Training and test sets.
         """
         idxs = np.arange(len(y))
         
@@ -420,11 +418,11 @@ if __name__ == "__main__":
     splits = {"train": train, "test": test}
     splits = {key: dataset.restructure_data(split) for key, split in splits.items()}
     splits = {key: dataset.expand_acc(split) for key, split in splits.items()}
-    
-    dataset.fit_transforms(splits['train'])
 
     splits = {key: dataset.create_sliding_windows(split, s_cols=["seqno", "sample"]) for key, split in splits.items()}
-    splits['val'], splits['test'] = dataset.split_dataset(splits['test']['X'], splits['test']['y'], splits['test']['seqnos'], test_size=0.5)
+    splits['test'], splits['val'] = dataset.split_dataset(splits['test']['X'], splits['test']['y'], splits['test']['seqnos'], test_size=0.5)
+
+    dataset.fit_transforms(splits['train']['X'], splits['train']['y'])
     
     splits = {
         key: {**split, 'X': dataset.preprocess(split['X'], data_split=key)}

@@ -3,10 +3,9 @@ import sys
 import time
 import json
 import numpy as np
-import keras.api as k
+import keras as k
 import keras_tuner as kt
-from keras.api import Model
-import tensorflow as tf
+from keras import Model
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -14,6 +13,7 @@ from config import Config
 from data.dataset import Dataset
 from modelling.model import build_fused_model
 from utils.callbacks import get_callbacks
+from utils.set_seed import set_seeds
 
 
 class CustomHyperModel(kt.HyperModel):
@@ -54,48 +54,16 @@ class CustomHyperModel(kt.HyperModel):
         # Model Params
         hp.Int("fc_units", min_value=64, max_value=128, step=32)
         hp.Int("gru_units", min_value=64, max_value=128, step=32)
-        hp.Choice("learning_rate", values=[1e-3, 1e-4, 1e-5])
-        hp.Choice("batch_size", values=[32, 64])
+        hp.Choice("learning_rate", values=[1e-3, 1e-4])
 
         # Dropout rates
         hp.Choice("gru_dropout", values=[0.0, 0.1])
-        hp.Choice("xception_dropout", values=[0.25, 0.5])
-        hp.Choice("fc_dropout", values=[0.25, 0.5])
+        hp.Choice("xception_dropout", values=[0.0, 0.2])
+        hp.Choice("fc_dropout", values=[0.0, 0.2, 0.4])
 
         # Instantiate and compile model with hyperparameters
         model = build_fused_model(hp)
         return model
-
-    def fit(self, hp: kt.HyperParameters, model: Model, *args, **kwargs):
-        """Fits the model with the given hyperparameters and batch size
-        Args:
-            hp (kt.HyperParameters): Hyperparameters for the model.
-            model (Model): The model to fit.
-            *args: Additional positional arguments for model.fit.
-            **kwargs: Additional keyword arguments for model.fit.
-        Returns:
-            History: The history of the training process.
-        """
-        batch_size = hp.get("batch_size")
-
-        train_dataset = self.dataset.create_tf_dataset(
-            self.config.processed_dataset_dir + "train/",
-            batch_size=batch_size,
-        )
-
-        val_dataset = self.dataset.create_tf_dataset(
-            self.config.processed_dataset_dir + "val/",
-            batch_size=batch_size,
-        )
-        
-        return model.fit(
-            train_dataset,
-            validation_data=val_dataset,
-            epochs=30,
-            callbacks=[k.callbacks.EarlyStopping("val_loss", patience=3)],
-            verbose=1,
-        )
-
 
 def clean_history(history):
     """Convert all NumPy types in history to native Python types."""
@@ -109,6 +77,7 @@ def train_model():
 
     config = Config()
     dataset = Dataset(config.random_seed, target="true_room")
+    set_seeds(config.random_seed)
     
     # Check for required directories
     for base_dir in [
@@ -127,22 +96,28 @@ def train_model():
         directory=config.model_tuning_dir,
         project_name=config.experiment_name,
     )
+    
+    train_dataset = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "train/",
+        batch_size=config.batch_size
+    )
+    val_dataset = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "val/",
+        batch_size=config.batch_size
+    )
 
     # Search the space for optimum parameters, use early stopping if no improvement.
-    tuner.search()
+    tuner.search(train_dataset, 
+                 validation_data=val_dataset,
+                 epochs=30,
+                 callbacks=[k.callbacks.EarlyStopping("val_loss", patience=3)],
+                 verbose=1)
 
     # Get best hyperparameters
     best_hps = tuner.get_best_hyperparameters(1)[0]
 
     # Build best model and retrain on full dataset with all callbacks
     model = tuner.hypermodel.build(best_hps)
-
-    train_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "train/", batch_size=best_hps.get("batch_size")
-    )
-    val_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "val/", batch_size=best_hps.get("batch_size")
-    )
 
     start_time = time.time()
     history = model.fit(
