@@ -273,8 +273,6 @@ def save_metrics(gt: np.ndarray, preds: np.ndarray, labels: list[str], dir: str 
     y_pred = preds.argmax(axis=1)
     y_true = gt.argmax(axis=1)
 
-    dir = "reports/"
-
     # Generate and plot PR and ROC curves
     precision_recall_plot(gt, preds, labels, dir + "precision_recall.png")
     roc_auc_plot(gt, preds, labels, dir + "roc_auc.png")
