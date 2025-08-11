@@ -11,13 +11,36 @@ from sklearn.preprocessing import PowerTransformer, OneHotEncoder
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import Config
+from utils.set_seed import set_seeds
 
+# Typing for windowed data
 class WindowedData(TypedDict):
     X: list[pd.DataFrame]
     y: np.ndarray
     seqnos: np.ndarray
 
 class Dataset():
+    """Dataset class for handling data loading and preprocessing.
+    
+    Args:
+        seed (int): Random seed for reproducibility.
+        target (str): Name of the target column.
+        window_size (int, optional): Size of the sliding window. Defaults to 200.
+        step_size (int, optional): Step size for the sliding window. Defaults to 100.
+    
+    Attributes:
+        seed (int): Random seed for reproducibility.
+        acc_samples (list): List of accelerometer sample columns.
+        gateways (list): List of gateway columns.
+        window_size (int): Size of the sliding window.
+        step_size (int): Step size for the sliding window.
+        target_classes (list): List of target classes.
+        target_col (str): Name of the target column.
+        feature_cols (list): List of feature columns.
+        norm (dict): Dictionary to hold normalization parameters.
+        p_transformer (PowerTransformer): PowerTransformer instance for feature scaling.
+        ohe_encoder (OneHotEncoder): OneHotEncoder instance for categorical encoding.
+    """
     def __init__(self, seed, target, window_size=200, step_size=100):
         self.seed = seed
         self.acc_samples = [f's{i}{axis}' for i in range(1, 6) for axis in ['x', 'y', 'z']]
@@ -64,15 +87,23 @@ class Dataset():
         return train_data
 
     def restructure_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Restructures the DataFrame for model input.
+
+        Args:
+            df (pd.DataFrame): Input DataFrame.
+
+        Returns:
+            pd.DataFrame: Restructured DataFrame.
+        """
         df = df.copy()
 
         # Pivot the RSSI values for each gateway, fill na with -105 (~min RSSI)
         rssi = df.pivot_table(index='seqno', columns='gateway', values='rssi', aggfunc='first')
-        print(rssi.head())
         # Group by 'seqno' and flatten the accelerometer, true_room and timestamp cols
         acc = df.groupby('seqno')[self.acc_samples + ['true_room', 'timestamp']].first()
         # Join the dataset back together
         final_df = acc.join(rssi).reset_index()
+        print("Restructure Complete")
         print(final_df.head())
 
         return final_df
@@ -116,7 +147,6 @@ class Dataset():
         
         # Slice arrays for setup 
         rssi_now = df[self.gateways].iloc[:-1].to_numpy()
-        rssi_next = df[self.gateways].iloc[1:].to_numpy()
 
         print(f"Number of NaN values in RSSI: {df[self.gateways].isna().sum().sum()}")
         print(f"Number of non NaN values in RSSI: {df[self.gateways].notna().sum().sum()}")
@@ -138,13 +168,9 @@ class Dataset():
             'seqno': np.repeat(seqnos, 5),
             'sample': np.tile(np.arange(1, 6), len(df) - 1),
             self.target_col: np.repeat(targets, 5),
-            # **{} is dictionary comprehension for RSSI and acc values
             **{gateway: rssi_expanded[:, :, i].flatten() for i, gateway in enumerate(self.gateways)},
             **{f'a{axis}': acc_df[:, :, j].flatten() for j, axis in enumerate(axes)}
         })
-        
-        # NOW handle NaN values AND interpolation on the flattened data
-        print(f"Number of NaN values in RSSI AFTER expand: {out[self.gateways].isna().sum().sum()}")
 
         for gateway in self.gateways:
             # Interpolate NaN values in RSSI columns
@@ -153,7 +179,7 @@ class Dataset():
             out[gateway] = out[gateway].ffill().bfill()
 
         total_nan_final = out[self.gateways].isna().sum().sum()
-        print(f"TOTAL NaN after all handling: {total_nan_final}")
+        print(f"TOTAL NaN after handling: {total_nan_final}")
         
         return out
     
@@ -235,8 +261,8 @@ class Dataset():
             df = df.copy()
             # Add noise for acc + rssi
             # if data_split == "train":
-            #     df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.05)
-            #     df = self.add_noise(df, self.gateways, std=0.005, clip=0.02)
+                # df = self.add_noise(df, self.acc_cols, std=0.02, clip=0.04)
+                # df = self.add_noise(df, self.gateways, std=2, clip=4)
             # Power transform RSS columns
             df = self.power_transform(df, self.gateways)
             # Normalize IMU + RSS columns
@@ -276,7 +302,7 @@ class Dataset():
             self.norm[key] = {col: (global_min[col], global_max[col]) for col in cols}
         
         range_vals = global_max - global_min
-        range_vals = range_vals.where(range_vals > 1e-8, 1e-8)  # Avoid division by zero
+        range_vals = range_vals.where(range_vals > 1e-8, 1e-8) # Avoid division by zero
         df[cols] = (df[cols] - global_min) / range_vals 
         return df
 
@@ -326,7 +352,7 @@ class Dataset():
         df = df.copy()
         for col in cols:
             noise = np.random.normal(0, std, size=df[col].shape)
-            df[col] += noise
+            df[col] += noise.clip(-clip, clip)
         return df
 
     def save_data(self, X: list[pd.DataFrame], y: np.ndarray, seqnos: np.ndarray, data_split: str, dir: str):
@@ -344,14 +370,14 @@ class Dataset():
 
         assert not np.isnan(X_array).any(), "NaNs found in input"
         assert np.all(np.isfinite(X_array)), "Inf or NaN found"
-
+        print(f"Saving {data_split} data:")
         # Check X array stats
-        print("X shape:", X_array.shape)
-        print("X mean ± std:", X_array.mean(), X_array.std())
-        print("X min/max:", X_array.min(), X_array.max())
+        print("-- X shape:", X_array.shape)
+        print("-- X mean ± std:", X_array.mean(), X_array.std())
+        print("-- X min/max:", X_array.min(), X_array.max())
 
         # Check y values
-        print("y unique:", np.unique(y))
+        print("-- y unique:", np.unique(y))
         assert y.min() >= 0
         
         target_classes = {}
@@ -392,9 +418,9 @@ class Dataset():
         
         X = np.load(os.path.join(dir, "X.npy")).astype(np.float32)
         y = np.load(os.path.join(dir, "y.npy")).astype(np.float32)
-        print(np.unique(y))
-        print(y.shape)
-        print(y.dtype)
+        print(f"Loaded data from {dir}: ")
+        print("-- X shape:", X.shape)
+        print("-- y shape:", y.shape)
 
         dataset = tf.data.Dataset.from_tensor_slices((X, y))
         
@@ -407,7 +433,9 @@ class Dataset():
 if __name__ == "__main__":
     # Example usage
     config = Config()
+    set_seeds(config.random_seed)
     dataset = Dataset(config.random_seed, target='true_room', window_size=config.window_size, step_size=config.step_size)
+    
     train = dataset.load_raw_data(config.external_dataset_dir + "train/")
     test = dataset.load_raw_data(config.external_dataset_dir + "test/")[0]
     train = dataset.load_train_data(train)
@@ -418,9 +446,12 @@ if __name__ == "__main__":
     splits = {"train": train, "test": test}
     splits = {key: dataset.restructure_data(split) for key, split in splits.items()}
     splits = {key: dataset.expand_acc(split) for key, split in splits.items()}
+    
+    print(splits['train'].describe())
+    print(splits['test'].describe())
 
     splits = {key: dataset.create_sliding_windows(split, s_cols=["seqno", "sample"]) for key, split in splits.items()}
-    splits['test'], splits['val'] = dataset.split_dataset(splits['test']['X'], splits['test']['y'], splits['test']['seqnos'], test_size=0.5)
+    splits['train'], splits['val'] = dataset.split_dataset(splits['train']['X'], splits['train']['y'], splits['train']['seqnos'], test_size=0.2)
 
     dataset.fit_transforms(splits['train']['X'], splits['train']['y'])
     
@@ -429,9 +460,11 @@ if __name__ == "__main__":
               for key, split in splits.items()
     }
     
-    print(splits['train']['X'][0].shape)
+    print("Processed train split example:")
+    print(splits['train']['X'][0].columns.tolist())
     print(splits['train']['X'][0].describe())
-    
+
+
     for k, v in splits.items():
         print(f"--- {k} ---")
         dataset.save_data(
@@ -440,3 +473,4 @@ if __name__ == "__main__":
             dir=config.processed_dataset_dir
         )
     
+  

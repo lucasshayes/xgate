@@ -7,6 +7,16 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from custom_layers import ReduceMean1D, ReduceMax1D
 
 def cbam_1d_block(inputs, r_ratio=8, name="cbam"):
+    """Convolutional Block Attention Module (CBAM) across Feature and Temporal axis
+
+    Args:
+        inputs (tf.Tensor): Input tensor of shape (batch_size, time_steps, channels).
+        r_ratio (int, optional): Reduction ratio for channel attention. Defaults to 8.
+        name (str, optional): Name of the layer. Defaults to "cbam".
+
+    Returns:
+        tf.Tensor: Output tensor of shape (batch_size, time_steps, channels).
+    """
     channel = inputs.shape[-1]
     
     # Feature (channel) attention

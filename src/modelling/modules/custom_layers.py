@@ -4,6 +4,8 @@ import tensorflow as tf
 
 @keras.saving.register_keras_serializable()
 class ReduceMean1D(layers.Layer):
+    """Layer that performs mean pooling over the temporal dimension.
+    """
     def __init__(self, axis=1, keepdims=True, name="reduce_mean_1d", **kwargs):
         super(ReduceMean1D, self).__init__(name=name, **kwargs)
         self.axis = axis
@@ -22,6 +24,8 @@ class ReduceMean1D(layers.Layer):
 
 @keras.saving.register_keras_serializable()
 class ReduceMax1D(layers.Layer):
+    """Layer that performs max pooling over the temporal dimension.
+    """
     def __init__(self, axis=1, keepdims=True, name="reduce_max_1d", **kwargs):
         super(ReduceMax1D, self).__init__(name=name, **kwargs)
         self.axis = axis

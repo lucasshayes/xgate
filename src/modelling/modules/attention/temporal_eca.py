@@ -9,12 +9,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from custom_layers import ReduceMean1D
 
 def temporal_eca_block(inputs, gamma=2, b=1, name="temporal_eca"):
+    """Temporal Efficient Channel Attention Block
+
+    Args:
+        inputs (tf.Tensor): Input tensor of shape (batch_size, time_steps, channels).
+        gamma (int, optional): Parameter to control the channel attention. Defaults to 2.
+        b (int, optional): Parameter to control the channel attention. Defaults to 1.
+        name (str, optional): Name of the layer. Defaults to "temporal_eca".
+
+    Returns:
+        tf.Tensor: Output tensor of shape (batch_size, channels).
+    """
     channel = inputs.shape[-1]
     # Calculate kernel size based on channel size
     t = int(abs((np.log2(channel) + b) / gamma))
     k_size = t if t % 2 else t + 1
     
-    # Pooling over the temporal dimension
+    # Pooling over the feature dimension
     squeeze = ReduceMean1D(axis=-1, keepdims=True, name=f"{name}_squeeze")(inputs)
     # Excitation step (1D convolution))
     excite = layers.Conv1D(
