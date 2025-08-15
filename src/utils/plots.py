@@ -85,7 +85,6 @@ def precision_recall_plot(y_true: np.ndarray, y_pred: np.ndarray, labels: list[s
     ax.set_ylabel('Precision')
     ax.set_title('Precision-Recall Curves')
     ax.legend(loc="lower left")
-    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(path, bbox_inches='tight')

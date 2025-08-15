@@ -65,8 +65,15 @@ class CustomHyperModel(kt.HyperModel):
         model = build_fused_model(hp)
         return model
 
-def clean_history(history):
-    """Convert all NumPy types in history to native Python types."""
+def clean_history(history: dict) -> dict:
+    """Convert all NumPy types in history to native Python types.
+    
+    Args:
+        history (dict): History dictionary from model.fit
+    
+    Returns:
+        dict: Cleaned history ready for output
+    """
     return {metric: [float(x) for x in v] for metric, v in history.items()}
 
 
@@ -157,10 +164,8 @@ def train_model():
         for metric, v in best_metrics.items():
             f.write(f"{metric}: {v:.4f}\n")
 
-    # Save model historu
+    # Save model history
     with open(config.reports_dir + config.experiment_name + "/full_history.json", "w") as f:
         json.dump(cleaned_history, f, indent=4)
-
-
 
 train_model()

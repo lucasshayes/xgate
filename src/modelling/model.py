@@ -11,6 +11,12 @@ from config import Config
 def build_fused_model(hp: HyperParameters):
     """
     Build and compile the FusedModel using Functional API with the passed hyperparameters.
+
+    Args:
+        hp (kt.HyperParameters): Hyperparameters for the fused model.
+    
+    Returns:
+        keras.Model: Compiled model w/ passed hyperparameters.
     """
     config = Config()
     k.utils.set_random_seed(config.random_seed)

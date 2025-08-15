@@ -87,7 +87,7 @@ model.compile(
 )
 
 checkpoint_cb = k.callbacks.ModelCheckpoint(
-    filepath="best_model.keras",    
+    filepath=config.model_checkpoints_dir + "best_model.keras",    
     monitor="val_loss",             
     save_best_only=True,
 )
