@@ -4,17 +4,23 @@ import keras as k
 from modules.xception import xception_block
 from modules.attention.cbam import cbam_1d_block
 from modules.attention.temporal_eca import temporal_eca_block
-
-
+from modules.attention.feat_attention import feat_attention
+from modules.rolling_extraction import rolling_extraction
+from utils.set_seed import set_seeds
+from config import Config
 def build_fused_model(hp: HyperParameters):
     """
     Build and compile the FusedModel using Functional API with the passed hyperparameters.
     """
+    config = Config()
+    k.utils.set_random_seed(config.random_seed)
 
-    inputs = k.Input(shape=(50, 7)) 
+    inputs = k.Input(shape=(200, 7))
     x = inputs
 
     x = layers.Normalization(name="input_normalization")(x)
+    x = rolling_extraction(x, 100)
+    x = feat_attention(x)
     
     # Xception or FC branch
     if hp.get("xception_bool"):
@@ -44,11 +50,7 @@ def build_fused_model(hp: HyperParameters):
         return_sequences=True,
         name="gru_layer_1",
         recurrent_dropout=hp.get("gru_dropout"),
-        dropout=hp.get("gru_dropout"),
-        kernel_constraint=k.constraints.max_norm(3),
-        recurrent_constraint=k.constraints.max_norm(3),
-        kernel_initializer="orthogonal",
-        recurrent_initializer="orthogonal",
+        dropout=hp.get("gru_dropout")
     )(x)
 
     # Second GRU layer
@@ -57,11 +59,7 @@ def build_fused_model(hp: HyperParameters):
         return_sequences=True,
         name="gru_layer_2",
         recurrent_dropout=hp.get("gru_dropout"),
-        dropout=hp.get("gru_dropout"),
-        kernel_constraint=k.constraints.max_norm(3),
-        recurrent_constraint=k.constraints.max_norm(3),
-        kernel_initializer="orthogonal",
-        recurrent_initializer="orthogonal",
+        dropout=hp.get("gru_dropout")
     )(x)
     
     # Temporal ECA attention
@@ -91,7 +89,7 @@ def build_fused_model(hp: HyperParameters):
     model = k.Model(inputs=inputs, outputs=outputs, name="fused_model")
 
     model.compile(
-        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate"), clipnorm=1.0),
+        optimizer=k.optimizers.Adam(learning_rate=hp.get("learning_rate")),
         loss="categorical_crossentropy",
         metrics=["categorical_accuracy"],
     )

@@ -14,6 +14,7 @@ from modelling.modules.attention.cbam import cbam_1d_block
 from modelling.modules.attention.temporal_eca import temporal_eca_block
 from modelling.modules.xception import xception_block
 from modelling.modules.rolling_extraction import rolling_extraction
+from modelling.modules.magnitude_extraction import magnitude_extraction
 from utils.set_seed import set_seeds
 
 from evaluate import calc_attention_weights
@@ -62,7 +63,9 @@ hps = {
 }
 
 inputs = layers.Input(shape=(200, 7))
-x = rolling_extraction(inputs, 100) # Extracts mean and std features
+inputs = layers.Normalization(name="input_normalization")(inputs)
+# x = magnitude_extraction(inputs, indices=(0, 1, 2))
+x = rolling_extraction(inputs, 100)
 x = feat_attention(x)
 x = xception_block(x,
     **hps["xception"]
@@ -89,12 +92,10 @@ checkpoint_cb = k.callbacks.ModelCheckpoint(
     save_best_only=True,
 )
 
-
-
 model.fit(
     train_dataset,
     validation_data=val_dataset,
-    epochs=20,
+    epochs=40,
     callbacks=[k.callbacks.EarlyStopping("val_loss", patience=8), checkpoint_cb],
 )
 

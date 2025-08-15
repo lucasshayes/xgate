@@ -1,3 +1,4 @@
+from itertools import combinations
 import pandas as pd
 import numpy as np
 import os 
@@ -41,7 +42,7 @@ class Dataset():
         p_transformer (PowerTransformer): PowerTransformer instance for feature scaling.
         ohe_encoder (OneHotEncoder): OneHotEncoder instance for categorical encoding.
     """
-    def __init__(self, seed, target, window_size=200, step_size=100):
+    def __init__(self, seed, target='true_room', window_size=200, step_size=100):
         self.seed = seed
         self.acc_samples = [f's{i}{axis}' for i in range(1, 6) for axis in ['x', 'y', 'z']]
         self.gateways = ['bedroom', 'kitchen', 'living', 'stairs']
@@ -55,6 +56,44 @@ class Dataset():
         self.step_size = step_size
         self.p_transformer = PowerTransformer(method='yeo-johnson', standardize=True)
         self.ohe_encoder = OneHotEncoder()
+
+    def create_leave_users_out_splits(self, dir: str, val_trajectories: int = 3) -> list[tuple[list[str], list[str]]]:
+        files = [f for f in os.listdir(dir) if f.endswith('.csv')]
+        user_files = {}
+        
+        for f in files:
+            user = int(f.split('-')[0])
+            if user not in user_files:
+                user_files[user] = []
+            user_files[user].append(f)
+
+        # Create train/val splits for each user
+        splits = []
+        all_files = [f for files_list in user_files.values() for f in files_list]
+        used_files = set()
+        
+        # Create combinations of exactly val_trajectories files
+        for val_files in combinations(all_files, val_trajectories):
+            # Get users from these validation files
+            val_users = {int(f.split('-')[0]) for f in val_files}
+            
+            # Skip if any of these files have already been used for validation
+            if set(val_files) & used_files:
+                continue
+            
+            # Check if all files from these users are in validation
+            # (to maintain user separation - all trajectories from a user go together)
+            all_user_files = set()
+            for user in val_users:
+                all_user_files.update(user_files[user])
+            
+            # Only proceed if we're taking ALL files from these users
+            if set(val_files) == all_user_files:
+                train_files = [f for f in all_files if f not in val_files]
+                splits.append((train_files, list(val_files)))
+                used_files.update(val_files)
+                
+        return splits
 
     def load_raw_data(self, dir: str) -> list[pd.DataFrame]:
         """Loads raw data from the specified directory.
@@ -73,42 +112,6 @@ class Dataset():
             data.append(df)
         return data
     
-    def load_raw_data_leave_one_out_split(self, dir: str) -> tuple[list[pd.DataFrame], list[pd.DataFrame]]:
-        """Loads raw data from the specified directory and split off validation set.
-
-        Args:
-            dir (str): Directory containing the raw data files.
-
-        Returns:
-            tuple[list[pd.DataFrame], list[pd.DataFrame]]: Tuple containing two lists of DataFrames,
-            one for training data and one for validation data.
-        """
-        
-        files = [f for f in os.listdir(dir) if f.endswith('.csv')]
-        train_data = []
-        val_data = []
-        for file in files:
-            df = pd.read_csv(os.path.join(dir, file))
-            if not file.startswith('10'):
-                train_data.append(df)
-            else:
-                val_data.append(df)
-                
-        return train_data, val_data
-    
-    def load_train_data(self, dfs: list[pd.DataFrame]) -> pd.DataFrame:
-        """Loads and concatenates training data from a list of DataFrames.
-
-        Args:
-            dfs (list[pd.DataFrame]): List of DataFrames containing training data.
-
-        Returns:
-            pd.DataFrame: Concatenated DataFrame of training data.
-        """
-        train_data = pd.concat(dfs, ignore_index=True)
-        
-        return train_data
-
     def restructure_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Restructures the DataFrame for model input.
 
@@ -126,8 +129,6 @@ class Dataset():
         acc = df.groupby('seqno')[self.acc_samples + ['true_room', 'timestamp']].first()
         # Join the dataset back together
         final_df = acc.join(rssi).reset_index()
-        print("Restructure Complete")
-        print(final_df.head())
 
         return final_df
 
@@ -157,6 +158,37 @@ class Dataset():
         imu_max = transformed[self.acc_cols].max()
         self.norm['imu'] = {col: (imu_min[col], imu_max[col]) for col in self.acc_cols}
 
+    def data_pipeline(self, data_splits: dict[str, pd.DataFrame], fit_transforms: bool = True) -> dict[str, WindowedData]:
+        """Processes the data splits through the entire pipeline.
+
+        Args:
+            data_splits (dict[str, pd.DataFrame]): The data splits to process.
+            fit_transforms (bool, optional): Whether to fit the transformations. Defaults to True.
+
+        Returns:
+            dict[str, WindowedData]: The processed data splits.
+        """
+        # Step 1: Restructure data
+        splits = {key: self.restructure_data(split) for key, split in data_splits.items()}
+        
+        # Step 2: Expand accelerometer data
+        splits = {key: self.expand_acc(split) for key, split in splits.items()}
+        
+        # Step 3: Create sliding windows
+        splits = {key: self.create_sliding_windows(split, s_cols=["seqno", "sample"]) for key, split in splits.items()}
+        
+        # Step 4: Fit transforms if requested (usually on training data)
+        if fit_transforms and 'train' in splits:
+            self.fit_transforms(splits['train']['X'], splits['train']['y'])
+        
+        # Step 5: Preprocess windows
+        splits = {
+            key: {**split, 'X': self.preprocess_windows(split['X'], data_split=key)}
+            for key, split in splits.items()
+        }
+        
+        return splits
+    
     def expand_acc(self, df: pd.DataFrame) -> pd.DataFrame:
         """Expands the 5 accelerometer samples into separate rows, interpolating RSSI values based on timestamps.
 
@@ -171,9 +203,6 @@ class Dataset():
         # Slice arrays for setup 
         rssi_now = df[self.gateways].iloc[:-1].to_numpy()
 
-        print(f"Number of NaN values in RSSI: {df[self.gateways].isna().sum().sum()}")
-        print(f"Number of non NaN values in RSSI: {df[self.gateways].notna().sum().sum()}")
-        
         # Align targets to next row (end of window later)
         seqnos = df['seqno'].iloc[:-1].to_numpy()
         targets = df[self.target_col].iloc[:-1].to_numpy()
@@ -200,9 +229,6 @@ class Dataset():
             out[gateway] = out[gateway].interpolate(method='linear', limit_direction='both')
             # Forward/backward fill NaN values
             out[gateway] = out[gateway].ffill().bfill()
-
-        total_nan_final = out[self.gateways].isna().sum().sum()
-        print(f"TOTAL NaN after handling: {total_nan_final}")
         
         return out
     
@@ -244,32 +270,9 @@ class Dataset():
         seqnos = np.array(seqnos)
 
         return {'X': X, 'y': y, 'seqnos': seqnos}
-    
-    def split_dataset(self, X: list[pd.DataFrame], y: np.ndarray, seqnos: np.ndarray, test_size: float) -> tuple[WindowedData, WindowedData]:
-        """Splits the dataset into training and test sets.
-
-        Args:
-            X (list[pd.DataFrame]): Windowed feature dataframe
-            y (np.ndarray): The target values.
-            seqnos (np.ndarray): The sequence numbers.
-            test_size (float): Proportion of the dataset to include in the test set.
-
-        Returns:
-            tuple[dict, dict]: Training and test sets.
-        """
-        idxs = np.arange(len(y))
-        
-        train_idx, test_idx = train_test_split(
-            idxs,
-            test_size=test_size,
-            random_state=self.seed,
-        )
-
-        return ({'X': [X[i] for i in train_idx],'y': y[train_idx], 'seqnos': seqnos[train_idx]},
-                {'X': [X[i] for i in test_idx], 'y': y[test_idx], 'seqnos': seqnos[test_idx]}) 
                
-    def preprocess(self, X:list[pd.DataFrame], data_split: str = "train", smooth: bool = False) -> list[pd.DataFrame]:
-        """Preprocesses the DataFrame by normalizing, transforming, and smoothing the data.
+    def preprocess_windows(self, X:list[pd.DataFrame], data_split: str = "train", smooth: bool = False) -> list[pd.DataFrame]:
+        """Preprocesses the windows by normalizing, transforming, and smoothing the data.
 
         Args:
             df (list[pd.DataFrame]): The input DataFrames to preprocess.
@@ -277,7 +280,7 @@ class Dataset():
             smooth (bool, optional): Whether to apply smoothing to the data. Defaults to False.
 
         Returns:
-            list[pd.DataFrame]: The list of preprocessed DataFrames.
+            list[pd.DataFrame]: The list of preprocessed windows.
         """
         X_processed = []
         for df in X:
@@ -397,22 +400,6 @@ class Dataset():
         df = df.copy()
         df[cols] = self.p_transformer.transform(df[cols])
         return df
-    
-    def smooth_ewma(self, df: pd.DataFrame, cols: list, alpha: float = 0.1) -> pd.DataFrame:
-        """Applies Exponential Weighted Moving Average (EWMA) smoothing to specified columns.
-
-        Args:
-            df (pd.DataFrame): The input DataFrame.
-            cols (list): The list of column names to smooth.
-            alpha (float, optional): The smoothing factor. Defaults to 0.1.
-
-        Returns:
-            pd.DataFrame: The DataFrame with smoothed columns.
-        """
-        df = df.copy()
-        for col in cols:
-            df[col] = df[col].ewm(alpha=alpha, adjust=False).mean()
-        return df
 
     def add_noise(self, df: pd.DataFrame, cols: list[str], std: float = 0.01, clip: float = 0.1) -> pd.DataFrame:
         """Adds Gaussian noise to specified columns in the DataFrame.
@@ -446,30 +433,6 @@ class Dataset():
         df = df.copy()
         shift = np.random.normal(0, std, size=(len(df), len(cols)))
         df[cols] += shift
-        return df
-
-    def acc_rotation(self, df: pd.DataFrame, rot_range: float = 15) -> pd.DataFrame:
-        """Applies acceleration rotation to specified columns in the DataFrame.
-
-        Args:
-            df (pd.DataFrame): The input DataFrame.
-            rot_range (float, optional): The rotation range in degrees. Defaults to 15.
-
-        Returns:
-            pd.DataFrame: The DataFrame with rotated columns.
-        """
-        df = df.copy()
-        
-        # Calculate rotation angle in radians
-        angles = np.random.uniform(-rot_range, rot_range, size=len(df))
-        theta = np.radians(angles)
-
-        # Vectorized rotation
-        cos_t, sin_t = np.cos(theta), np.sin(theta)
-        y, z = df['ay'].values, df['az'].values
-        df['ay'] = y * cos_t - z * sin_t
-        df['az'] = y * sin_t + z * cos_t
-        
         return df
 
     def save_data(self, X: list[pd.DataFrame], y: np.ndarray, seqnos: np.ndarray, data_split: str, dir: str):
@@ -553,55 +516,58 @@ if __name__ == "__main__":
     set_seeds(config.random_seed)
     dataset = Dataset(config.random_seed, target='true_room', window_size=config.window_size, step_size=config.step_size)
     
-    # train = dataset.load_raw_data(config.external_dataset_dir + "train/")
-    # test = dataset.load_raw_data(config.external_dataset_dir + "test/")[0]
-    # train = dataset.load_train_data(train)
+    # 1. Fit transforms across all training data
+    print("Fitting global transforms...")
+    train = dataset.load_raw_data(config.external_dataset_dir + "train/")
+    train_final_df = pd.concat(train, ignore_index=True)
+    
+    # Process all training data to fit global transforms
+    global_data = {"train": train_final_df}
+    dataset.data_pipeline(global_data, fit_transforms=True)
+    
+    # Set target classes
+    dataset.target_classes = train_final_df['true_room'].unique().tolist()
+    print(f"Target classes: {dataset.target_classes}")
+    print("Global transforms fitted!")
 
-    train, val = dataset.load_raw_data_leave_one_out_split(config.external_dataset_dir + "train/")
+    # 2. Create cross-validation splits
+    cv_splits = dataset.create_leave_users_out_splits(config.external_dataset_dir + "train/", val_trajectories=3)
+
+    for i, (train_files, val_files) in enumerate(cv_splits):
+        print(f"Fold {i + 1}:")
+        print("-- Train files:", train_files)
+        print("-- Val files:", val_files)
+
+        # 3. Process training and validation data for each fold
+        train = [pd.read_csv(os.path.join(config.external_dataset_dir + "train/", f)) for f in train_files]
+        val = [pd.read_csv(os.path.join(config.external_dataset_dir + "train/", f)) for f in val_files]
+        
+        train_df = pd.concat(train, ignore_index=True)
+        val_df = pd.concat(val, ignore_index=True)
+
+        splits = {"train": train_df, "val": val_df}
+        processed_splits = dataset.data_pipeline(splits, fit_transforms=False)
+
+        # 4. Save for later use
+        fold_dir = f"fold_{i + 1}"
+        for k, v in processed_splits.items():
+            dataset.save_data(
+                **v,
+                data_split=k,
+                dir=os.path.join(config.processed_dataset_dir, fold_dir)
+            )
+        
+        print(f"Data saved for fold {i + 1}")
+    
+    # Process evaluation train/test split
     test = dataset.load_raw_data(config.external_dataset_dir + "test/")[0]
-    train = dataset.load_train_data(train)
-    val = dataset.load_train_data(val)
-
-    dataset.target_classes = train['true_room'].unique().tolist()
-    print(f"True Rooms: {dataset.target_classes}")
+    eval_data = {"train": train_final_df, "test": test}
+    final_splits = dataset.data_pipeline(eval_data, fit_transforms=False)
     
-    # splits = {"train": train, "test": test}
-    splits = {"train": train, "val": val, "test": test}
-    splits = {key: dataset.restructure_data(split) for key, split in splits.items()}
-    splits = {key: dataset.expand_acc(split) for key, split in splits.items()}
-    
-    print(splits['train'].describe())
-    print(splits['test'].describe())
-
-    splits = {key: dataset.create_sliding_windows(split, s_cols=["seqno", "sample"]) for key, split in splits.items()}
-    # splits['train'], splits['val'] = dataset.split_dataset(splits['train']['X'], splits['train']['y'], splits['train']['seqnos'], test_size=0.2)
-
-    dataset.fit_transforms(splits['train']['X'], splits['train']['y'])
-    
-    # splits = {
-    #     key: {
-    #         **split,
-    #         **dict(zip(('X', 'y'), dataset.augment(split['X'], split['y'], data_split=key, factor=2)))
-    #     }
-    #     for key, split in splits.items()
-    # }
-    
-    splits = {
-        key: {**split, 'X': dataset.preprocess(split['X'], data_split=key)}
-              for key, split in splits.items()
-    }
-    
-    print("Processed train split example:")
-    print(splits['train']['X'][0].columns.tolist())
-    print(splits['train']['X'][0].describe())
-
-
-    for k, v in splits.items():
-        print(f"--- {k} ---")
+    # Save final evaluation data
+    for k, v in final_splits.items():
         dataset.save_data(
             **v,
             data_split=k,
-            dir=config.processed_dataset_dir
+            dir=os.path.join(config.processed_dataset_dir, "eval")
         )
-    
-  

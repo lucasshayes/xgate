@@ -10,11 +10,10 @@ from keras import Model
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import Config
-from data.dataset import Dataset
+from data.cvDataset import Dataset
 from modelling.model import build_fused_model
 from utils.callbacks import get_callbacks
 from utils.set_seed import set_seeds
-
 
 class CustomHyperModel(kt.HyperModel):
     def __init__(self, config, dataset):
@@ -45,7 +44,7 @@ class CustomHyperModel(kt.HyperModel):
 
         # Xception Params
         hp.Int("num_filters", min_value=16, max_value=32, step=8)
-        hp.Int("kernel_size", min_value=3, max_value=15, step=4)
+        hp.Int("kernel_size", min_value=3, max_value=11, step=4)
         hp.Int("middle_blocks", min_value=2, max_value=4)
 
         # CBAM reduction ratio
@@ -59,16 +58,67 @@ class CustomHyperModel(kt.HyperModel):
         # Dropout rates
         hp.Choice("gru_dropout", values=[0.0, 0.1])
         hp.Choice("xception_dropout", values=[0.0, 0.2])
-        hp.Choice("fc_dropout", values=[0.2, 0.4, 0.5])
+        hp.Choice("fc_dropout", values=[0.2, 0.4])
 
         # Instantiate and compile model with hyperparameters
         model = build_fused_model(hp)
         return model
 
+class CrossValTuner(kt.BayesianOptimization):
+    def __init__(self, hypermodel, config, dataset, **kwargs):
+        super().__init__(hypermodel, **kwargs)
+        self.config = config
+        self.dataset = dataset
+        self.fold_dirs = self._get_fold_dirs()
+
+    def _get_fold_dirs(self):
+        """Creates a list of fold directories for cross-validation."""
+        base_dir = self.config.processed_dataset_dir
+        fold_dirs = []
+        
+        for d in os.listdir(base_dir):
+            if d.startswith("fold_"):
+                fold_dirs.append(os.path.join(base_dir, d))
+        
+        print(f"Found {len(fold_dirs)} folds")
+        return sorted(fold_dirs)
+
+    def run_trial(self, trial, *args, **kwargs):
+        """Override to use CV instead of single val set"""
+        hp = trial.hyperparameters
+        model = self.hypermodel.build(hp)
+        
+        fold_scores = []
+        
+        for i, fold_dir in enumerate(self.fold_dirs):
+            print(f"Evaluating fold {i + 1}/{len(self.fold_dirs)}")
+            train = self.dataset.create_tf_dataset(os.path.join(fold_dir, "train/"), batch_size=self.config.batch_size)
+            val = self.dataset.create_tf_dataset(os.path.join(fold_dir, "val/"), batch_size=self.config.batch_size)
+            
+            # Reset weights
+            model = self.hypermodel.build(hp)
+            
+            # Train on the fold
+            history = model.fit(
+                train,
+                validation_data=val,
+                epochs=30,
+                callbacks=[k.callbacks.EarlyStopping("val_loss", patience=5)],
+                verbose=0,
+            )
+
+            fold_scores.append(min(history.history["val_loss"]))
+
+        mean_cv_score = np.mean(fold_scores)
+        std_cv_score = np.std(fold_scores)
+        print(f"Fold scores: {fold_scores}")
+        print(f"  CV Score: {mean_cv_score:.4f} ± {std_cv_score:.4f}")
+        
+        return mean_cv_score
+
 def clean_history(history):
     """Convert all NumPy types in history to native Python types."""
     return {metric: [float(x) for x in v] for metric, v in history.items()}
-
 
 def train_model():
     """Performs hyperparameter tuning using the defined space in build_model, using the config.
@@ -89,40 +139,42 @@ def train_model():
         os.makedirs(os.path.join(base_dir, config.experiment_name), exist_ok=True)
 
     # Tune the model according to val_loss
-    tuner = kt.BayesianOptimization(
+    tuner = CrossValTuner(
         CustomHyperModel(config, dataset),
+        config=config,
+        dataset=dataset,
         objective="val_loss",
-        max_trials=200,
+        max_trials=100,
         directory=config.model_tuning_dir,
         project_name=config.experiment_name,
     )
     
-    train_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "train/",
-        batch_size=config.batch_size
-    )
-    val_dataset = dataset.create_tf_dataset(
-        config.processed_dataset_dir + "val/",
-        batch_size=config.batch_size
-    )
-
-    # Search the space for optimum parameters, use early stopping if no improvement.
-    tuner.search(train_dataset, 
-                 validation_data=val_dataset,
-                 epochs=30,
-                 callbacks=[k.callbacks.EarlyStopping("val_loss", patience=5)],
-                 verbose=1)
+    # Run hyperparameter search
+    print("Starting cross-val hyperparameter search")
+    tuner.search()
 
     # Get best hyperparameters
     best_hps = tuner.get_best_hyperparameters(1)[0]
+    print(f"Best hyperparameters: {best_hps.values}")
 
     # Build best model and retrain on full dataset with all callbacks
+    print("Training final model with best  hyperparameters")
     model = tuner.hypermodel.build(best_hps)
+
+    train = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "train/",
+        batch_size=config.batch_size
+    )
+    test = dataset.create_tf_dataset(
+        config.processed_dataset_dir + "test/",
+        batch_size=config.batch_size,
+        shuffle=False
+    )
 
     start_time = time.time()
     history = model.fit(
-        train_dataset,
-        validation_data=val_dataset,
+        train,
+        validation_data=test,
         epochs=50,
         callbacks=get_callbacks(
             config.experiment_name, 5, config.model_checkpoints_dir, config.model_logs_dir

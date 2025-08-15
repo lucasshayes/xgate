@@ -19,4 +19,4 @@ def rolling_extraction(x, window: int = 5):
     variance = k.ops.maximum(rolling_mean_x2 - k.ops.square(rolling_mean), k.backend.epsilon())
     rolling_std = k.ops.sqrt(variance)
     
-    return k.layers.Concatenate(name="concat")([x, rolling_mean, rolling_std])
+    return layers.Concatenate(name="concat")([x, rolling_mean, rolling_std])
