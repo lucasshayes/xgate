@@ -32,12 +32,19 @@ def cm_plot(
 
     plt.figure(figsize=(8, 6))
     cmap = sns.color_palette("flare", as_cmap=True)
+    bold_font = {'fontweight': 'bold'}
+
+    sns.heatmap(cm, annot=True, fmt=".2f", cmap=cmap, xticklabels=labels, yticklabels=labels, annot_kws=bold_font)
     
-    sns.heatmap(cm, annot=True, fmt=".2f", cmap=cmap, xticklabels=labels, yticklabels=labels)
-    plt.title(title)
-    plt.xlabel("Predicted Label")
-    plt.ylabel("True Label")
+    plt.title(title, fontdict=bold_font)
+    plt.xlabel("Predicted Label", fontdict=bold_font)
+    plt.ylabel("True Label", fontdict=bold_font)
+    
+    plt.xticks(fontweight='bold')
+    plt.yticks(fontweight='bold')
+    
     plt.savefig(path)
+    plt.close()
 
 def precision_recall_plot(y_true: np.ndarray, y_pred: np.ndarray, labels: list[str], path: str = "reports/precision_recall.png") -> None:
     """Plot precision-recall curves for each class.
@@ -288,23 +295,39 @@ def save_metrics(gt: np.ndarray, preds: np.ndarray, labels: list[str], dir: str 
     
     report_plot(report, labels, dir)
 
-def feat_attention_plot(avg_attention: np.ndarray, feats: list[str], path: str = "reports/feature_attention.png") -> None:
+def feat_attention_plot(attention: np.ndarray, y: np.ndarray, feats: list[str], labels: list[str], path: str = "reports/feature_attention.png") -> None:
     """Plot average feature attention weights.
 
     Args:
-        avg_attention (np.ndarray): Average attention weights for features.
+        attention (np.ndarray): Attention weights for features for each prediction
+        y (np.ndarray): Ground truth labels.
         feats (list[str]): List of feature names.
+        labels (list[str]): List of room labels.
         path (str, optional): Path to save the plot. Defaults to "reports/feature_attention.png".
     """
     all_feats = feats + [f"mean_{i}" for i in feats] + [f"std_{i}" for i in feats]
-    colors = sns.color_palette("flare", len(all_feats))
+    per_room_attention = {label: [] for label in labels}
+
+    # Convert to index based to match labels array
+    y = y.argmax(axis=1)
+
+    # Group attention weights by room label
+    per_room_attention = np.array([
+        attention[y == i].mean(axis=0) if np.any(y == i) else np.zeros(attention.shape[1])
+        for i in range(len(labels))
+    ])
     
-    plt.figure(figsize=(10, 4))
-    plt.bar(all_feats, avg_attention, color=colors)
-    plt.xlabel("Feature")
-    plt.ylabel("Attention Weight")
-    plt.title("Average Feature Attention Weights")
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
+    print(per_room_attention.shape, len(all_feats), len(labels))
+    
+    cmap = sns.color_palette("flare", as_cmap=True)
+    bold_font = {'fontweight': 'bold'}
+    plt.figure(figsize=(14, 6))
+
+    sns.heatmap(per_room_attention, cmap=cmap, annot=True, annot_kws=bold_font, fmt=".2f", xticklabels=all_feats, yticklabels=labels)
+    plt.title("Average Feature Attention / Room", fontdict=bold_font)
+    
+    plt.xticks(rotation=45, fontweight='bold')
+    plt.yticks(fontweight='bold')
+    
     plt.savefig(path, bbox_inches='tight')
     plt.close()

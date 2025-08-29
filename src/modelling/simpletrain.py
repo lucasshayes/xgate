@@ -114,7 +114,7 @@ def update_bn_stats(model, unlabeled_data):
 test_features = np.asarray(list(test_dataset.map(lambda x, y: x)))
 update_bn_stats(model, test_features)
 
-model: k.Model = k.models.load_model("best_model.keras", compile=True)
+model: k.Model = k.models.load_model(config.model_checkpoints_dir + "best_model.keras", compile=True)
 
 metrics = model.evaluate(test_dataset, return_dict=True)
 print(metrics)

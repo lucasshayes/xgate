@@ -1,0 +1,45 @@
+{
+    "bedroom": {
+        "precision": 0.3987538940809969,
+        "recall": 1.0,
+        "f1-score": 0.5701559020044543,
+        "support": 128.0,
+        "specificity": 0.7846
+    },
+    "kitchen": {
+        "precision": 1.0,
+        "recall": 0.9820971867007673,
+        "f1-score": 0.9909677419354839,
+        "support": 391.0,
+        "specificity": 1.0
+    },
+    "livingroom": {
+        "precision": 1.0,
+        "recall": 0.5921908893709328,
+        "f1-score": 0.7438692098092643,
+        "support": 461.0,
+        "specificity": 1.0
+    },
+    "stairs": {
+        "precision": 0.9565217391304348,
+        "recall": 1.0,
+        "f1-score": 0.9777777777777777,
+        "support": 44.0,
+        "specificity": 0.998
+    },
+    "accuracy": 0.8095703125,
+    "macro avg": {
+        "precision": 0.8388189083028579,
+        "recall": 0.893572019017925,
+        "f1-score": 0.8206926578817451,
+        "support": 1024.0,
+        "specificity": 0.9456
+    },
+    "weighted avg": {
+        "precision": 0.9229760302383855,
+        "recall": 0.8095703125,
+        "f1-score": 0.826556904782849,
+        "support": 1024.0,
+        "specificity": 0.973
+    }
+}

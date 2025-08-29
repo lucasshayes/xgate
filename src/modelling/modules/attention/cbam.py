@@ -48,17 +48,17 @@ def cbam_1d_block(inputs, r_ratio=8, name="cbam"):
     temporal_concat = layers.Concatenate(axis=-1, name=f"{name}_temporal_concat")([temporal_avg, temporal_max])
     
     # Conv1D for spatial attention
-    spatial_att = layers.Conv1D(
+    temporal_att = layers.Conv1D(
         filters=1,
         kernel_size=7,
         padding="same",
         activation="sigmoid",
         use_bias=False,
-        name=f"{name}_spatial_conv"
+        name=f"{name}_temporal_conv"
     )(temporal_concat)
-    
-    # Apply spatial attention
-    cbam_output = layers.Multiply(name=f"{name}_spatial_mul")([channel_refined, spatial_att])
+
+    # Apply temporal attention
+    cbam_output = layers.Multiply(name=f"{name}_temporal_mul")([channel_refined, temporal_att])
     
     # Residual connection
     output = layers.Add(name=f"{name}_residual_add")([inputs, cbam_output])
